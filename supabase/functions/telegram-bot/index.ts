@@ -410,11 +410,17 @@ Deno.serve(async (req: Request) => {
       }
       try {
         const settings = await readProfileSettings(telegramUserId);
-        const steps = Array.isArray(settings.daily_steps) ? settings.daily_steps : [];
+        const configuredSteps = Array.isArray(settings.daily_steps) ? settings.daily_steps : [];
+        const launchOnly = configuredSteps.length === 0 && typeof settings.game_package === "string";
+        const steps = configuredSteps.length
+          ? configuredSteps
+          : launchOnly ? [{ type: "launch_app", package_name: settings.game_package as string }] : [];
         const job = await enqueueDailyJob(telegramUserId, chatId, updateId, steps);
-        reply = steps.length
-          ? `Задание daily_routine сохранено в Supabase. ID: ${job.id}. Статус: ${job.status}. Шагов: ${steps.length}.`
-          : `Задание сохранено в очереди (ID: ${job.id}), но сценарий не настроен. Сначала используй /set daily_steps с JSON-массивом шагов.`;
+        reply = configuredSteps.length
+          ? `Задание daily_routine сохранено в Supabase. ID: ${job.id}. Статус: ${job.status}. Шагов сценария: ${steps.length}.`
+          : launchOnly
+          ? `Задание сохранено (ID: ${job.id}): исполнитель только запустит игру ${String(settings.game_package)}. Для последовательности игровых действий задай /set daily_steps.`
+          : `Задание сохранено в очереди (ID: ${job.id}), но сценарий не настроен. Задай /set game_package com.example.game или /set daily_steps с JSON-массивом шагов.`;
       } catch (error) {
         console.error("job enqueue failed", error instanceof Error ? error.message : "unknown");
         reply = "Не удалось сохранить задание. Проверь состояние базы и повтори попытку.";
