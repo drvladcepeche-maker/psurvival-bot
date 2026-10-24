@@ -80,7 +80,8 @@ class WorkerAccessibilityService : AccessibilityService() {
                 api(token, JSONObject()
                     .put("action", "fail")
                     .put("job_id", jobId)
-                    .put("error", (error.message ?: "Executor error").take(500)))
+                    .put("error", (error.message ?: "Executor error").take(500))
+                    .put("retryable", error !is IllegalArgumentException))
             }
         } finally {
             activeJobId = null
