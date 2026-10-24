@@ -98,7 +98,7 @@ Deno.serve(async (req: Request) => {
         : `webhook_registration_error_${registration.error_code ?? "unknown"}`;
       return json({
         ok: true, service: "telegram-bot", configured: true, webhookRegistered: false, status,
-        diagnostic: description.replace(/[\\r\\n\\t]/g, " ").slice(0, 180),
+        diagnostic: description.replace(/[\\r\n\\t]/g, " ").slice(0, 180),
       });
     }
 
@@ -124,7 +124,7 @@ Deno.serve(async (req: Request) => {
   const text = typeof message?.text === "string" ? message.text.trim() : "";
   if (chatId === undefined || !text) return json({ ok: true, ignored: true });
 
-  const commandMatch = text.match(/^\\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\\s|$)/i);
+  const commandMatch = text.match(/^\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\s|$)/i);
   const command = commandMatch?.[1]?.toLowerCase() ?? "";
   let reply: string;
   switch (command) {
@@ -132,7 +132,7 @@ Deno.serve(async (req: Request) => {
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
     case "help":
-      reply = "Команды бота:\\n/start — проверить подключение\\n/help — список команд\\n/status — проверить облачный вебхук\\n/about — возможности прототипа";
+      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/about — возможности прототипа";
       break;
     case "about":
       reply = "Сейчас доступны Telegram-команды и облачный вебхук. Автоматизация игрового процесса, управление Android и выполнение игровых действий ещё не реализованы.";
@@ -145,7 +145,7 @@ Deno.serve(async (req: Request) => {
         reply = "Вебхук Telegram не совпадает с ожидаемым адресом Supabase. Требуется восстановление подключения.";
       } else {
         const pending = info.result.pending_update_count ?? 0;
-        reply = `Облачный вебхук подключён.\\nОжидающих обновлений: ${pending}.\\nЭто подтверждает регистрацию вебхука, но не проверяет управление игрой.`;
+        reply = `Облачный вебхук подключён.\nОжидающих обновлений: ${pending}.\nЭто подтверждает регистрацию вебхука, но не проверяет управление игрой.`;
       }
       break;
     }
