@@ -19,10 +19,32 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Type-check Edge Function
-        run: deno check supabase/functions/telegram-bot/index.ts
+      - name: Type-check Edge Functions
+        run: |
+          deno check supabase/functions/telegram-bot/index.ts
+          deno check supabase/functions/psurvival-worker/index.ts
       - name: Test webhook secret validation
         run: deno test supabase/functions/telegram-bot/tests/webhook_secret_test.ts
+      - name: Verify worker endpoint rejects unauthenticated calls
+        run: |
+          node --input-type=module <<'NODE'
+          const url = "https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/psurvival-worker";
+          const health = await fetch(url);
+          if (!health.ok) throw new Error(`Worker health endpoint returned HTTP ${health.status}`);
+          const status = await health.json();
+          if (status.ok !== true || status.service !== "psurvival-worker" || status.configured !== true) {
+            throw new Error("Worker endpoint is not configured");
+          }
+          const unauthorized = await fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "claim" }),
+          });
+          if (unauthorized.status !== 401) {
+            throw new Error(`Worker endpoint should reject missing token with HTTP 401, got ${unauthorized.status}`);
+          }
+          console.log("Worker endpoint health and unauthenticated-request rejection verified.");
+          NODE
       - name: Register and verify deployed Telegram webhook
         run: |
           node --input-type=module <<'NODE'
