@@ -59,7 +59,7 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 
 - Implemented commands: `/start`, `/help`, `/status`, `/settings`, `/tasks`, `/daily`, `/register_worker`, `/rotate_worker`, and `/about`.
 - Telegram user profiles are persisted in `psurvival_bot_profiles`; settings storage is ready for additional user-configurable fields.
-- `/daily` enqueues a durable `daily_routine` job with an idempotency key, so Telegram retries do not create duplicate tasks.
+- `/daily` enqueues a durable `daily_routine` job with an idempotency key, so Telegram retries do not create duplicate tasks. Configure `daily_steps` first; otherwise the executor marks the job as unconfigured rather than pretending it ran.
 - `/tasks` reads the most recent tasks from Supabase.
 - `/register_worker` issues a private-chat worker token; `/rotate_worker` invalidates the previous token by replacing its hash.
 - Queue schema: `psurvival_bot_jobs`; executor registry: `psurvival_bot_devices`; event log: `psurvival_bot_job_events`.
@@ -68,9 +68,10 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 - Telegram send failures are checked against both HTTP status and the Bot API JSON `ok` field; failures return HTTP 502 so Telegram can retry delivery.
 - A GET request to the function endpoint returns a basic health/configuration response.
 - The health endpoint does not prove that a real Telegram chat received a reply; that requires a live message roundtrip.
-- The persistent database and server-side worker protocol are deployed, but no Android client is present yet. Therefore, queued tasks remain pending until a worker client connects.
+- An Android AccessibilityService client is now in the repository. It polls the queue, sends heartbeats, executes explicit steps, and reports completion or failure. APK generation is being validated in GitHub Actions; no physical-device run has been confirmed.
 - The current `daily_routine` task is only a queue record; it does not yet launch the game or perform in-game actions.
-- A real Android executor must be developed and tested on a physical device, with explicit permissions and recovery for screen locks, app restarts, and network loss.
+- The Android client requires manual installation, token entry, and enabling the Accessibility service in Android Settings. It has not been tested on the user's physical device, and behavior under screen locks, app restarts, and network loss remains unverified.
+- Configure a routine in a private Telegram chat with `/set daily_steps [{"type":"launch_app","package_name":"com.global.ztmslg"},{"type":"wait","duration_ms":3000}]`. Supported step types are `launch_app`, `wait`, `back`, `tap_text`, `tap_description`, and `tap_coordinates`. Screen-specific actions must be tuned to the actual game UI.
 - Supabase Edge Functions are short-lived request handlers, not a persistent Android emulator or 24/7 gameplay host.
 
 ## Safety
