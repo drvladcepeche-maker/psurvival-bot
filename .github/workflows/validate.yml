@@ -23,3 +23,16 @@ jobs:
         run: deno check supabase/functions/telegram-bot/index.ts
       - name: Test webhook secret validation
         run: deno test supabase/functions/telegram-bot/tests/webhook_secret_test.ts
+      - name: Smoke-test deployed function health endpoint
+        run: |
+          node --input-type=module <<'NODE'
+          const url = "https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/telegram-bot";
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`Health endpoint returned HTTP ${response.status}`);
+          const data = await response.json();
+          if (data.ok !== true || data.service !== "telegram-bot") {
+            throw new Error("Unexpected health endpoint response");
+          }
+          console.log(`Function reachable; secrets configured: ${Boolean(data.configured)}`);
+          if (!data.configured) console.warn("::warning::Telegram secrets are not configured; webhook cannot be activated yet.");
+          NODE
