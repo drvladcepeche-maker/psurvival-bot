@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { matchesSecret } from "../_shared/webhook_secret.ts";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -6,16 +7,6 @@ const json = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json; charset=utf-8" },
   });
 
-function matchesSecret(expected: string, supplied: string): boolean {
-  const expectedBytes = new TextEncoder().encode(expected);
-  const suppliedBytes = new TextEncoder().encode(supplied);
-  let mismatch = expectedBytes.length ^ suppliedBytes.length;
-  const maxLength = Math.max(expectedBytes.length, suppliedBytes.length);
-  for (let i = 0; i < maxLength; i++) {
-    mismatch |= (expectedBytes[i] ?? 0) ^ (suppliedBytes[i] ?? 0);
-  }
-  return mismatch === 0;
-}
 
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
