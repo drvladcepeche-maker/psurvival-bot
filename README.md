@@ -67,7 +67,7 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 - Job claims are scoped to the Telegram user who owns the worker.
 - Telegram send failures are checked against both HTTP status and the Bot API JSON `ok` field; failures return HTTP 502 so Telegram can retry delivery.
 - A GET request to the function endpoint returns a basic health/configuration response.
-- The health response only confirms that secrets exist, not that the Telegram webhook or Bot API has been tested.
+- The health endpoint does not prove that a real Telegram chat received a reply; that requires a live message roundtrip.
 - The persistent database and server-side worker protocol are deployed, but no Android client is present yet. Therefore, queued tasks remain pending until a worker client connects.
 - The current `daily_routine` task is only a queue record; it does not yet launch the game or perform in-game actions.
 - A real Android executor must be developed and tested on a physical device, with explicit permissions and recovery for screen locks, app restarts, and network loss.
