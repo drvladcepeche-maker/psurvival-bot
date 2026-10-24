@@ -1,0 +1,26 @@
+name: Diagnose Telegram token configuration
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check configured token aliases without revealing values
+        run: |
+          node --input-type=module <<'NODE'
+          const url = "https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/telegram-token-diagnostic";
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`Diagnostic endpoint returned HTTP ${response.status}`);
+          const data = await response.json();
+          if (data.ok !== true || !data.tokenChecks) throw new Error("Unexpected diagnostic response");
+          for (const [name, status] of Object.entries(data.tokenChecks)) {
+            console.log(`${name}: ${status}`);
+          }
+          NODE
