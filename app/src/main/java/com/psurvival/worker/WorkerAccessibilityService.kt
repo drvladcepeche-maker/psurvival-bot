@@ -172,7 +172,11 @@ class WorkerAccessibilityService : AccessibilityService() {
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) throw IllegalStateException("Worker API HTTP $code")
-            return JSONObject(raw)
+            val parsed = JSONObject(raw)
+            if (!parsed.optBoolean("ok")) {
+                throw IllegalStateException(parsed.optString("error", "Worker API rejected the request"))
+            }
+            return parsed
         } finally {
             connection.disconnect()
         }
