@@ -36,7 +36,7 @@ async function telegramApi<T>(
   } catch {
     return { ok: false, error_code: response.status };
   }
-  if (!response.ok) return { ok: false, error_code: data.error_code ?? response.status };
+  if (!response.ok) return { ok: false, error_code: data.error_code ?? response.status, description: data.description };
   return data;
 }
 
