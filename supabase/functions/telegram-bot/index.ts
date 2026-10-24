@@ -79,7 +79,19 @@ Deno.serve(async (req: Request) => {
         ? "telegram_network_error"
         : description.includes("secret")
         ? "webhook_secret_rejected"
-        : description.includes("webhook") || description.includes("https")
+        : description.includes("certificate") || description.includes("tls")
+        ? "webhook_tls_certificate_rejected"
+        : description.includes("resolve") || description.includes("dns")
+        ? "webhook_dns_resolution_failed"
+        : description.includes("timeout") || description.includes("timed out")
+        ? "webhook_connection_timeout"
+        : description.includes("ip address")
+        ? "webhook_ip_rejected"
+        : description.includes("https")
+        ? "webhook_https_requirement_failed"
+        : description.includes("wrong response") || description.includes("response")
+        ? "webhook_endpoint_response_rejected"
+        : description.includes("webhook") || description.includes("url")
         ? "webhook_target_rejected"
         : description.includes("token")
         ? "telegram_bot_token_rejected"
