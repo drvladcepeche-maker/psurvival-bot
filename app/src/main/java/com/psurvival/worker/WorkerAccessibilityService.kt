@@ -40,6 +40,7 @@ class WorkerAccessibilityService : AccessibilityService() {
         return if (id.isNotEmpty() && token.startsWith("psw_")) id to token else null
     }
 
+    @Synchronized
     private fun pollOrHeartbeat() {
         val config = settings() ?: return
         val current = activeJobId
