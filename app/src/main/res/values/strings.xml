@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">P&amp;S Worker</string>
+    <string name="accessibility_service_name">P&amp;S Worker executor</string>
+    <string name="accessibility_service_description">Executes explicitly queued UI steps from your private bot task queue. Requires user-enabled Accessibility access.</string>
+</resources>
