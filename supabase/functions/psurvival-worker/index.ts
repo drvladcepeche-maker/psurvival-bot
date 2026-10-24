@@ -106,7 +106,8 @@ Deno.serve(async (req: Request) => {
         details = { result_keys: Object.keys(result as Record<string, unknown>).slice(0, 20) };
       } else {
         const message = typeof body.error === "string" ? body.error.slice(0, 500) : "Worker reported failure";
-        const willRetry = current[0].attempts < current[0].max_attempts;
+        const retryable = body.retryable !== false;
+        const willRetry = retryable && current[0].attempts < current[0].max_attempts;
         const delaySeconds = Math.min(300, 15 * (2 ** Math.max(0, current[0].attempts - 1)));
         patch = {
           status: willRetry ? "queued" : "failed",
