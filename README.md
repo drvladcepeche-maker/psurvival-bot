@@ -1,6 +1,6 @@
 # Puzzles & Survival Telegram Bot — cloud prototype
 
-A minimal cloud webhook for a Telegram bot related to Puzzles & Survival. The first iteration supports `/start` and `/help`; it does **not** automate gameplay or run an emulator.
+A Telegram bot backend with persistent Supabase profiles and task queue, a device-authenticated worker API, and an Android AccessibilityService worker prototype. The Android client can execute explicit UI steps supplied in a queued job; a ready-made game routine and physical-device test are not yet complete.
 
 ## Architecture
 
