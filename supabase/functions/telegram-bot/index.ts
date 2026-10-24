@@ -11,6 +11,7 @@ type TelegramApiResult<T> = {
   ok: boolean;
   result?: T;
   error_code?: number;
+  description?: string;
   transport_error?: boolean;
 };
 
@@ -73,9 +74,18 @@ Deno.serve(async (req: Request) => {
       url: targetUrl.toString(), secret_token: webhookSecret, allowed_updates: ["message"], drop_pending_updates: false,
     });
     if (!registration.ok || registration.result !== true) {
+      const description = (registration.description ?? "").toLowerCase();
+      const status = registration.transport_error
+        ? "telegram_network_error"
+        : description.includes("secret")
+        ? "webhook_secret_rejected"
+        : description.includes("webhook") || description.includes("https")
+        ? "webhook_target_rejected"
+        : description.includes("token")
+        ? "telegram_bot_token_rejected"
+        : `webhook_registration_error_${registration.error_code ?? "unknown"}`;
       return json({
-        ok: true, service: "telegram-bot", configured: true, webhookRegistered: false,
-        status: registration.transport_error ? "telegram_network_error" : `webhook_registration_error_${registration.error_code ?? "unknown"}`,
+        ok: true, service: "telegram-bot", configured: true, webhookRegistered: false, status,
       });
     }
 
