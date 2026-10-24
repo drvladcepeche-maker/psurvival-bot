@@ -432,7 +432,7 @@ Deno.serve(async (req: Request) => {
         if (registered.alreadyRegistered) {
           reply = "Android-исполнитель уже зарегистрирован. Если потерян токен, используй /rotate_worker; старый токен перестанет работать.";
         } else {
-          reply = `Исполнитель зарегистрирован. Сохрани токен в настройках Android-приложения и не пересылай его другим.\nWorker ID: android_${telegramUserId}\nAPI: https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/psurvival-worker\nToken: ${registered.token}\n\nВнимание: API очереди готов, но Android-клиент, который запускает игру и выполняет действия, ещё не установлен.`;
+          reply = `Исполнитель зарегистрирован. Сохрани токен в настройках Android-приложения и не пересылай его другим.\nWorker ID: android_${telegramUserId}\nAPI: https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/psurvival-worker\nToken: ${registered.token}\n\nAPK Android-исполнителя собирается в CI. После установки и включения службы доступности он сможет выполнять сохранённые шаги интерфейса.`;
         }
       } catch (error) {
         console.error("worker registration failed", error instanceof Error ? error.message : "unknown");
