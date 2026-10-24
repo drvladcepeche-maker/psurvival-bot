@@ -126,6 +126,86 @@ async function registerWorker(telegramUserId: number, updateId: number, rotate: 
 }
 
 
+
+type ProfileSettings = Record<string, unknown>;
+
+async function readProfileSettings(telegramUserId: number): Promise<ProfileSettings> {
+  const query = new URLSearchParams({
+    select: "settings",
+    telegram_user_id: `eq.${telegramUserId}`,
+    limit: "1",
+  });
+  const rows = await databaseRequest<Array<{ settings: ProfileSettings }>>(
+    `psurvival_bot_profiles?${query.toString()}`,
+  );
+  return rows[0]?.settings ?? {};
+}
+
+function validateDailySteps(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 30) {
+    return "daily_steps должен быть JSON-массивом из 1–30 шагов.";
+  }
+  for (const [index, step] of value.entries()) {
+    if (!step || typeof step !== "object" || Array.isArray(step)) return `Шаг ${index + 1}: ожидается JSON-объект.`;
+    const item = step as Record<string, unknown>;
+    switch (item.type) {
+      case "wait":
+        if (typeof item.duration_ms !== "number" || !Number.isInteger(item.duration_ms) || item.duration_ms < 250 || item.duration_ms > 10000) {
+          return `Шаг ${index + 1}: duration_ms должен быть целым числом 250–10000.`;
+        }
+        break;
+      case "back":
+        break;
+      case "tap_text":
+        if (typeof item.text !== "string" || !item.text.trim() || item.text.length > 120) return `Шаг ${index + 1}: нужен text длиной до 120 символов.`;
+        break;
+      case "tap_description":
+        if (typeof item.description !== "string" || !item.description.trim() || item.description.length > 120) return `Шаг ${index + 1}: нужен description длиной до 120 символов.`;
+        break;
+      case "tap_coordinates":
+        if (!Number.isInteger(item.x) || !Number.isInteger(item.y) || (item.x as number) < 0 || (item.y as number) < 0 || (item.x as number) > 10000 || (item.y as number) > 10000) {
+          return `Шаг ${index + 1}: x и y должны быть целыми координатами 0–10000.`;
+        }
+        break;
+      case "launch_app":
+        if (typeof item.package_name !== "string" || !/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(item.package_name)) {
+          return `Шаг ${index + 1}: package_name должен быть идентификатором Android-пакета.`;
+        }
+        break;
+      default:
+        return `Шаг ${index + 1}: неизвестный тип. Допустимы wait, back, tap_text, tap_description, tap_coordinates, launch_app.`;
+    }
+  }
+  return null;
+}
+
+async function setProfileSetting(telegramUserId: number, key: string, rawValue: string): Promise<string> {
+  let value: unknown;
+  if (key === "game_package") {
+    if (!/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(rawValue)) return "game_package должен быть идентификатором Android-пакета.";
+    value = rawValue;
+  } else if (key === "daily_steps") {
+    try { value = JSON.parse(rawValue); } catch { return "daily_steps должен содержать корректный JSON-массив."; }
+    const validation = validateDailySteps(value);
+    if (validation) return validation;
+  } else {
+    return "Допустимые ключи: game_package, daily_steps.";
+  }
+
+  const settings = await readProfileSettings(telegramUserId);
+  settings[key] = value;
+  const query = new URLSearchParams({ telegram_user_id: `eq.${telegramUserId}` });
+  const updated = await databaseRequest<Array<{ telegram_user_id: number }>>(
+    `psurvival_bot_profiles?${query.toString()}`,
+    "PATCH",
+    [{ settings, updated_at: new Date().toISOString() }],
+  );
+  if (!updated?.length) throw new Error("profile_setting_update_failed");
+  return key === "daily_steps"
+    ? `Сохранён сценарий из ${(value as unknown[]).length} шагов.`
+    : `Сохранён пакет игры: ${String(value)}.`;
+}
+
 async function listUserJobs(telegramUserId: number): Promise<StoredJob[]> {
   const query = new URLSearchParams({
     select: "id,task_type,status,scheduled_at,created_at,last_error",
@@ -136,7 +216,7 @@ async function listUserJobs(telegramUserId: number): Promise<StoredJob[]> {
   return await databaseRequest<StoredJob[]>(`psurvival_bot_jobs?${query.toString()}`);
 }
 
-async function enqueueDailyJob(telegramUserId: number, chatId: number, updateId: number): Promise<StoredJob> {
+async function enqueueDailyJob(telegramUserId: number, chatId: number, updateId: number, steps: unknown[]): Promise<StoredJob> {
   const idempotencyKey = `telegram_update_${updateId}`;
   const rows = await databaseRequest<StoredJob[]>(
     "psurvival_bot_jobs?on_conflict=telegram_user_id,idempotency_key",
@@ -145,7 +225,7 @@ async function enqueueDailyJob(telegramUserId: number, chatId: number, updateId:
       telegram_user_id: telegramUserId,
       chat_id: chatId,
       task_type: "daily_routine",
-      payload: { requested_via: "telegram" },
+      payload: { requested_via: "telegram", steps },
       status: "queued",
       idempotency_key: idempotencyKey,
     }],
@@ -267,7 +347,7 @@ Deno.serve(async (req: Request) => {
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
     case "help":
-      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — проверить сохранение профиля\n/tasks — последние задания\n/daily — поставить ежедневный сценарий в очередь\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа";
+      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сценарий в очередь\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа";
       break;
     case "settings": {
       if (telegramUserId === undefined || !serviceKey()) {
@@ -275,20 +355,36 @@ Deno.serve(async (req: Request) => {
         break;
       }
       try {
-        const query = new URLSearchParams({
-          select: "telegram_user_id,settings,automation_enabled,updated_at,last_seen_at",
-          telegram_user_id: `eq.${telegramUserId}`,
-          limit: "1",
-        });
-        const rows = await databaseRequest<Array<{ settings: Record<string, unknown>; automation_enabled: boolean; updated_at: string }>>(
-          `psurvival_bot_profiles?${query.toString()}`,
-        );
-        const profile = rows[0];
-        reply = profile
-          ? `Профиль сохранён в Supabase.\nАвтоматизация включена: ${profile.automation_enabled ? "да" : "нет"}.\nНастройки: ${JSON.stringify(profile.settings)}\nИзменено: ${profile.updated_at}`
-          : "Профиль ещё не найден. Отправь /settings повторно.";
+        const settings = await readProfileSettings(telegramUserId);
+        const steps = Array.isArray(settings.daily_steps) ? settings.daily_steps.length : 0;
+        reply = `Профиль сохранён в Supabase.\nПакет игры: ${String(settings.game_package ?? "не задан")}.\nШагов сценария: ${steps}.\nНастройки: ${JSON.stringify(settings)}\nЧтобы задать сценарий: /set daily_steps [{"type":"launch_app","package_name":"пакет.приложения"}]`;
       } catch {
         reply = "Не удалось прочитать настройки из Supabase. Проверь состояние базы и повтори попытку.";
+      }
+      break;
+    }
+    case "set": {
+      if (telegramUserId === undefined || !serviceKey()) {
+        reply = "Хранилище настроек недоступно.";
+        break;
+      }
+      const args = text.replace(/^\/set(?:@[a-z0-9_]+)?\s*/i, "");
+      const split = args.search(/\s/);
+      if (split < 1) {
+        reply = 'Формат: /set game_package com.example.game или /set daily_steps [{"type":"wait","duration_ms":1000}]';
+        break;
+      }
+      const key = args.slice(0, split).trim();
+      const value = args.slice(split).trim();
+      if (!value) {
+        reply = "После ключа настройки нужно указать значение.";
+        break;
+      }
+      try {
+        reply = await setProfileSetting(telegramUserId, key, value);
+      } catch (error) {
+        console.error("profile setting update failed", error instanceof Error ? error.message : "unknown");
+        reply = "Не удалось сохранить настройку в Supabase.";
       }
       break;
     }
@@ -313,8 +409,12 @@ Deno.serve(async (req: Request) => {
         break;
       }
       try {
-        const job = await enqueueDailyJob(telegramUserId, chatId, updateId);
-        reply = `Задание daily_routine сохранено в Supabase. ID: ${job.id}. Статус: ${job.status}.\nИсполнитель ещё не подключён, поэтому игровые действия пока не выполняются.`;
+        const settings = await readProfileSettings(telegramUserId);
+        const steps = Array.isArray(settings.daily_steps) ? settings.daily_steps : [];
+        const job = await enqueueDailyJob(telegramUserId, chatId, updateId, steps);
+        reply = steps.length
+          ? `Задание daily_routine сохранено в Supabase. ID: ${job.id}. Статус: ${job.status}. Шагов: ${steps.length}.`
+          : `Задание сохранено в очереди (ID: ${job.id}), но сценарий не настроен. Сначала используй /set daily_steps с JSON-массивом шагов.`;
       } catch (error) {
         console.error("job enqueue failed", error instanceof Error ? error.message : "unknown");
         reply = "Не удалось сохранить задание. Проверь состояние базы и повтори попытку.";
