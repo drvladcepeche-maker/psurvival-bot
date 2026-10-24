@@ -34,6 +34,7 @@ jobs:
             throw new Error("Unexpected health endpoint response");
           }
           console.log(`Telegram webhook status: ${String(data.status)}`);
+          if (typeof data.diagnostic === "string" && data.diagnostic) console.log(`Telegram diagnostic: ${data.diagnostic}`);
           if (data.configured !== true) throw new Error("Telegram secrets are missing");
           if (data.webhookRegistered !== true) {
             throw new Error(`Telegram webhook is not verified (status: ${String(data.status)})`);
