@@ -7,24 +7,36 @@ const json = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json; charset=utf-8" },
   });
 
-type TelegramApiResult<T> = { ok: boolean; result?: T };
+type TelegramApiResult<T> = {
+  ok: boolean;
+  result?: T;
+  error_code?: number;
+  transport_error?: boolean;
+};
 
 async function telegramApi<T>(
   token: string,
   method: string,
   payload?: Record<string, unknown>,
 ): Promise<TelegramApiResult<T>> {
-  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: payload ? "POST" : "GET",
-    headers: payload ? { "content-type": "application/json" } : undefined,
-    body: payload ? JSON.stringify(payload) : undefined,
-  });
-  if (!response.ok) return { ok: false };
+  let response: Response;
   try {
-    return await response.json() as TelegramApiResult<T>;
+    response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: payload ? "POST" : "GET",
+      headers: payload ? { "content-type": "application/json" } : undefined,
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
   } catch {
-    return { ok: false };
+    return { ok: false, transport_error: true };
   }
+  let data: TelegramApiResult<T>;
+  try {
+    data = await response.json() as TelegramApiResult<T>;
+  } catch {
+    return { ok: false, error_code: response.status };
+  }
+  if (!response.ok) return { ok: false, error_code: data.error_code ?? response.status };
+  return data;
 }
 
 Deno.serve(async (req: Request) => {
@@ -32,23 +44,10 @@ Deno.serve(async (req: Request) => {
     const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
     const webhookSecret = Deno.env.get("TELEGRAM_WEBHOOK_SECRET");
     if (!botToken || !webhookSecret) {
-      return json({
-        ok: true,
-        service: "telegram-bot",
-        configured: false,
-        webhookRegistered: false,
-        status: "missing_secrets",
-      });
+      return json({ ok: true, service: "telegram-bot", configured: false, webhookRegistered: false, status: "missing_secrets" });
     }
-
     if (!/^[A-Za-z0-9_-]{1,256}$/.test(webhookSecret)) {
-      return json({
-        ok: true,
-        service: "telegram-bot",
-        configured: true,
-        webhookRegistered: false,
-        status: "webhook_secret_format_invalid",
-      });
+      return json({ ok: true, service: "telegram-bot", configured: true, webhookRegistered: false, status: "webhook_secret_format_invalid" });
     }
 
     const targetUrl = new URL(req.url);
@@ -57,123 +56,65 @@ Deno.serve(async (req: Request) => {
     const info = await telegramApi<{ url?: string }>(botToken, "getWebhookInfo");
     if (!info.ok || !info.result) {
       return json({
-        ok: true,
-        service: "telegram-bot",
-        configured: true,
-        webhookRegistered: false,
-        status: "telegram_status_unavailable",
+        ok: true, service: "telegram-bot", configured: true, webhookRegistered: false,
+        status: info.transport_error ? "telegram_network_error" : `telegram_api_error_${info.error_code ?? "unknown"}`,
       });
     }
 
     const currentUrl = info.result.url ?? "";
     if (currentUrl === targetUrl.toString()) {
-      return json({
-        ok: true,
-        service: "telegram-bot",
-        configured: true,
-        webhookRegistered: true,
-        status: "already_registered",
-      });
+      return json({ ok: true, service: "telegram-bot", configured: true, webhookRegistered: true, status: "already_registered" });
     }
-
-    // Never replace another integration's webhook or discard pending updates.
     if (currentUrl !== "") {
-      return json({
-        ok: true,
-        service: "telegram-bot",
-        configured: true,
-        webhookRegistered: false,
-        status: "another_webhook_already_configured",
-      });
+      return json({ ok: true, service: "telegram-bot", configured: true, webhookRegistered: false, status: "another_webhook_already_configured" });
     }
 
     const registration = await telegramApi<boolean>(botToken, "setWebhook", {
-      url: targetUrl.toString(),
-      secret_token: webhookSecret,
-      allowed_updates: ["message"],
-      drop_pending_updates: false,
+      url: targetUrl.toString(), secret_token: webhookSecret, allowed_updates: ["message"], drop_pending_updates: false,
     });
-
     if (!registration.ok || registration.result !== true) {
       return json({
-        ok: true,
-        service: "telegram-bot",
-        configured: true,
-        webhookRegistered: false,
-        status: "registration_failed",
+        ok: true, service: "telegram-bot", configured: true, webhookRegistered: false,
+        status: registration.transport_error ? "telegram_network_error" : `webhook_registration_error_${registration.error_code ?? "unknown"}`,
       });
     }
 
     const verify = await telegramApi<{ url?: string }>(botToken, "getWebhookInfo");
     const verified = verify.ok && verify.result?.url === targetUrl.toString();
     return json({
-      ok: true,
-      service: "telegram-bot",
-      configured: true,
-      webhookRegistered: verified,
-      status: verified ? "registered_and_verified" : "registration_unverified",
+      ok: true, service: "telegram-bot", configured: true, webhookRegistered: verified,
+      status: verified ? "registered_and_verified" : verify.transport_error ? "telegram_network_error" : `verification_error_${verify.error_code ?? "url_mismatch"}`,
     });
   }
 
-  if (req.method !== "POST") {
-    return json({ ok: false, error: "POST required" }, 405);
-  }
-
+  if (req.method !== "POST") return json({ ok: false, error: "POST required" }, 405);
   const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
   const webhookSecret = Deno.env.get("TELEGRAM_WEBHOOK_SECRET");
-  if (!botToken || !webhookSecret) {
-    return json({ ok: false, error: "Bot configuration is missing" }, 503);
-  }
-
-  const suppliedSecret =
-    req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
-  if (!matchesSecret(webhookSecret, suppliedSecret)) {
-    return json({ ok: false, error: "Unauthorized" }, 401);
-  }
+  if (!botToken || !webhookSecret) return json({ ok: false, error: "Bot configuration is missing" }, 503);
+  const suppliedSecret = req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
+  if (!matchesSecret(webhookSecret, suppliedSecret)) return json({ ok: false, error: "Unauthorized" }, 401);
 
   let update: unknown;
-  try {
-    update = await req.json();
-  } catch {
-    return json({ ok: false, error: "Invalid JSON" }, 400);
-  }
-
-  const message = (update as {
-    message?: {
-      chat?: { id?: number };
-      text?: string;
-    };
-  })?.message;
+  try { update = await req.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+  const message = (update as { message?: { chat?: { id?: number }; text?: string } })?.message;
   const chatId = message?.chat?.id;
   const text = typeof message?.text === "string" ? message.text.trim() : "";
-
-  if (chatId === undefined || !text) {
-    return json({ ok: true, ignored: true });
-  }
+  if (chatId === undefined || !text) return json({ ok: true, ignored: true });
 
   let reply: string;
   if (text === "/start" || text.startsWith("/start@")) {
-    reply =
-      "Бот подключён. Это начальный облачный прототип для Puzzles & Survival. Доступны команды /start и /help; управление игрой ещё не подключено.";
+    reply = "Бот подключён. Это начальный облачный прототип для Puzzles & Survival. Доступны команды /start и /help; управление игрой ещё не подключено.";
   } else if (text === "/help" || text.startsWith("/help@")) {
-    reply =
-      "Доступные команды:\n/start — проверить подключение\n/help — список команд\n\nУправление игрой пока не реализовано.";
+    reply = "Доступные команды:\n/start — проверить подключение\n/help — список команд\n\nУправление игрой пока не реализовано.";
   } else {
     reply = "Команда пока не реализована. Используй /help.";
   }
 
-  const telegramResponse = await fetch(
-    `https://api.telegram.org/bot${botToken}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: reply }),
-    },
-  );
-
-  if (!telegramResponse.ok) {
-    return json({ ok: false, error: "Telegram sendMessage failed" }, 502);
-  }
-
+  const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: reply }),
+  });
+  if (!telegramResponse.ok) return json({ ok: false, error: "Telegram sendMessage failed" }, 502);
   return json({ ok: true });
 });
