@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert";
-import { matchesSecret } from "../_shared/webhook_secret.ts";
+import { matchesSecret } from "../../_shared/webhook_secret.ts";
 
 Deno.test("accepts identical webhook secrets", () => {
   assertEquals(matchesSecret("long_random_secret_123", "long_random_secret_123"), true);
