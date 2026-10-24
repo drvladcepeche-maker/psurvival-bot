@@ -1,0 +1,25 @@
+name: Validate Telegram bot
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check Edge Function
+        run: deno check supabase/functions/telegram-bot/index.ts
+      - name: Test webhook secret validation
+        run: deno test supabase/functions/telegram-bot/tests/webhook_secret_test.ts
