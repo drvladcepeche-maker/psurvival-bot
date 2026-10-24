@@ -53,8 +53,6 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, service: "telegram-bot", configured: true, webhookRegistered: false, status: "webhook_secret_format_invalid" });
     }
 
-    // Always register the canonical public HTTPS endpoint, not the request URL
-    // which may reflect an internal proxy scheme.
     const targetUrl = new URL(WEBHOOK_URL);
     const info = await telegramApi<{ url?: string }>(botToken, "getWebhookInfo");
     if (!info.ok || !info.result) {
@@ -126,20 +124,39 @@ Deno.serve(async (req: Request) => {
   const text = typeof message?.text === "string" ? message.text.trim() : "";
   if (chatId === undefined || !text) return json({ ok: true, ignored: true });
 
+  const commandMatch = text.match(/^\\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\\s|$)/i);
+  const command = commandMatch?.[1]?.toLowerCase() ?? "";
   let reply: string;
-  if (text === "/start" || text.startsWith("/start@")) {
-    reply = "Бот подключён. Это начальный облачный прототип для Puzzles & Survival. Доступны команды /start и /help; управление игрой ещё не подключено.";
-  } else if (text === "/help" || text.startsWith("/help@")) {
-    reply = "Доступные команды:\n/start — проверить подключение\n/help — список команд\n\nУправление игрой пока не реализовано.";
-  } else {
-    reply = "Команда пока не реализована. Используй /help.";
+  switch (command) {
+    case "start":
+      reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
+      break;
+    case "help":
+      reply = "Команды бота:\\n/start — проверить подключение\\n/help — список команд\\n/status — проверить облачный вебхук\\n/about — возможности прототипа";
+      break;
+    case "about":
+      reply = "Сейчас доступны Telegram-команды и облачный вебхук. Автоматизация игрового процесса, управление Android и выполнение игровых действий ещё не реализованы.";
+      break;
+    case "status": {
+      const info = await telegramApi<{ url?: string; pending_update_count?: number; last_error_message?: string }>(botToken, "getWebhookInfo");
+      if (!info.ok || !info.result) {
+        reply = "Не удалось проверить Telegram API. Повтори попытку позже.";
+      } else if (info.result.url !== WEBHOOK_URL) {
+        reply = "Вебхук Telegram не совпадает с ожидаемым адресом Supabase. Требуется восстановление подключения.";
+      } else {
+        const pending = info.result.pending_update_count ?? 0;
+        reply = `Облачный вебхук подключён.\\nОжидающих обновлений: ${pending}.\\nЭто подтверждает регистрацию вебхука, но не проверяет управление игрой.`;
+      }
+      break;
+    }
+    default:
+      reply = "Эта команда пока не реализована. Используй /help.";
   }
 
-  const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: reply }),
-  });
-  if (!telegramResponse.ok) return json({ ok: false, error: "Telegram sendMessage failed" }, 502);
+  const sent = await telegramApi<{ message_id?: number }>(botToken, "sendMessage", { chat_id: chatId, text: reply });
+  if (!sent.ok || !sent.result) {
+    // Non-2xx makes Telegram retry the update instead of silently losing the reply.
+    return json({ ok: false, error: "Telegram sendMessage failed", code: sent.error_code ?? null }, 502);
+  }
   return json({ ok: true });
 });
