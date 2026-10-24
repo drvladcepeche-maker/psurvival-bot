@@ -77,6 +77,55 @@ async function saveProfile(telegramUserId: number, chatId: number): Promise<void
 
 type StoredJob = { id: string; task_type: string; status: string; scheduled_at: string; created_at: string; last_error?: string | null; idempotency_key?: string | null };
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function deriveWorkerToken(telegramUserId: number, updateId: number): Promise<string> {
+  const key = serviceKey();
+  if (!key) throw new Error("database_service_key_missing");
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC", cryptoKey, new TextEncoder().encode(`psurvival-worker:${telegramUserId}:${updateId}`),
+  );
+  return "psw_" + Array.from(new Uint8Array(signature), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function registerWorker(telegramUserId: number, updateId: number, rotate: boolean): Promise<{ token: string; alreadyRegistered: boolean }> {
+  const workerId = `android_${telegramUserId}`;
+  const token = await deriveWorkerToken(telegramUserId, updateId);
+  const tokenHash = await sha256Hex(token);
+  const query = new URLSearchParams({
+    select: "worker_id,token_hash",
+    worker_id: `eq.${workerId}`,
+    limit: "1",
+  });
+  const existing = await databaseRequest<Array<{ worker_id: string; token_hash: string }>>(
+    `psurvival_bot_devices?${query.toString()}`,
+  );
+  if (existing[0] && !rotate) {
+    if (existing[0].token_hash === tokenHash) return { token, alreadyRegistered: false };
+    return { token: "", alreadyRegistered: true };
+  }
+  await databaseRequest(
+    "psurvival_bot_devices?on_conflict=worker_id",
+    "POST",
+    [{
+      worker_id: workerId,
+      owner_telegram_user_id: telegramUserId,
+      token_hash: tokenHash,
+      label: `Android worker ${telegramUserId}`,
+      enabled: true,
+      updated_at: new Date().toISOString(),
+    }],
+  );
+  return { token, alreadyRegistered: false };
+}
+
+
 async function listUserJobs(telegramUserId: number): Promise<StoredJob[]> {
   const query = new URLSearchParams({
     select: "id,task_type,status,scheduled_at,created_at,last_error",
@@ -218,7 +267,7 @@ Deno.serve(async (req: Request) => {
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
     case "help":
-      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — проверить сохранение профиля\n/tasks — последние задания\n/daily — поставить ежедневный сценарий в очередь\n/about — возможности прототипа";
+      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — проверить сохранение профиля\n/tasks — последние задания\n/daily — поставить ежедневный сценарий в очередь\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа";
       break;
     case "settings": {
       if (telegramUserId === undefined || !serviceKey()) {
@@ -272,8 +321,27 @@ Deno.serve(async (req: Request) => {
       }
       break;
     }
+    case "register_worker":
+    case "rotate_worker": {
+      if (telegramUserId === undefined || chatId !== telegramUserId || !serviceKey()) {
+        reply = "Регистрация исполнителя доступна только в личном чате и при подключённом хранилище.";
+        break;
+      }
+      try {
+        const registered = await registerWorker(telegramUserId, updateId, command === "rotate_worker");
+        if (registered.alreadyRegistered) {
+          reply = "Android-исполнитель уже зарегистрирован. Если потерян токен, используй /rotate_worker; старый токен перестанет работать.";
+        } else {
+          reply = `Исполнитель зарегистрирован. Сохрани токен в настройках Android-приложения и не пересылай его другим.\nWorker ID: android_${telegramUserId}\nAPI: https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/psurvival-worker\nToken: ${registered.token}\n\nВнимание: API очереди готов, но Android-клиент, который запускает игру и выполняет действия, ещё не установлен.`;
+        }
+      } catch (error) {
+        console.error("worker registration failed", error instanceof Error ? error.message : "unknown");
+        reply = "Не удалось зарегистрировать исполнителя. Проверь состояние базы и повтори попытку.";
+      }
+      break;
+    }
     case "about":
-      reply = "Сейчас доступны Telegram-команды, постоянные профили и очередь заданий в Supabase. Исполнитель Android и реальные действия в игре ещё не подключены.";
+      reply = "Работают Telegram-команды, постоянные профили, очередь заданий и серверный протокол исполнителя. Android-клиент, который взаимодействует с интерфейсом игры, ещё не реализован.";
       break;
     case "status": {
       const info = await telegramApi<{ url?: string; pending_update_count?: number; last_error_message?: string }>(botToken, "getWebhookInfo");
