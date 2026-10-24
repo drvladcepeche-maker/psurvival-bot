@@ -42,6 +42,68 @@ async function telegramApi<T>(
   return data;
 }
 
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "https://xevqbgjtxuveeqaiacvm.supabase.co";
+
+function serviceKey(): string | null {
+  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? null;
+}
+
+async function databaseRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const key = serviceKey();
+  if (!key) throw new Error("database_service_key_missing");
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method,
+    headers: {
+      apikey: key,
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+      prefer: method === "POST" ? "return=representation,resolution=merge-duplicates" : "return=representation",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`database_http_${response.status}:${raw.slice(0, 200)}`);
+  return (raw ? JSON.parse(raw) : null) as T;
+}
+
+async function saveProfile(telegramUserId: number, chatId: number): Promise<void> {
+  await databaseRequest(
+    "psurvival_bot_profiles?on_conflict=telegram_user_id",
+    "POST",
+    [{ telegram_user_id: telegramUserId, chat_id: chatId, last_seen_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+  );
+}
+
+type StoredJob = { id: string; task_type: string; status: string; scheduled_at: string; created_at: string; last_error?: string | null };
+
+async function listUserJobs(telegramUserId: number): Promise<StoredJob[]> {
+  const query = new URLSearchParams({
+    select: "id,task_type,status,scheduled_at,created_at,last_error",
+    telegram_user_id: `eq.${telegramUserId}`,
+    order: "created_at.desc",
+    limit: "5",
+  });
+  return await databaseRequest<StoredJob[]>(`psurvival_bot_jobs?${query.toString()}`);
+}
+
+async function enqueueDailyJob(telegramUserId: number, chatId: number, updateId: number): Promise<StoredJob> {
+  const rows = await databaseRequest<StoredJob[]>(
+    "psurvival_bot_jobs?on_conflict=telegram_user_id,idempotency_key",
+    "POST",
+    [{
+      telegram_user_id: telegramUserId,
+      chat_id: chatId,
+      task_type: "daily_routine",
+      payload: { requested_via: "telegram" },
+      status: "queued",
+      idempotency_key: `telegram_update_${updateId}`,
+    }],
+  );
+  if (!rows?.[0]) throw new Error("database_job_insert_returned_no_row");
+  return rows[0];
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "GET") {
     const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
@@ -119,10 +181,24 @@ Deno.serve(async (req: Request) => {
 
   let update: unknown;
   try { update = await req.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
-  const message = (update as { message?: { chat?: { id?: number }; text?: string } })?.message;
+  const updateObject = update as {
+    update_id?: number;
+    message?: { chat?: { id?: number }; from?: { id?: number }; text?: string };
+  };
+  const message = updateObject?.message;
   const chatId = message?.chat?.id;
+  const telegramUserId = message?.from?.id;
+  const updateId = updateObject?.update_id ?? Date.now();
   const text = typeof message?.text === "string" ? message.text.trim() : "";
   if (chatId === undefined || !text) return json({ ok: true, ignored: true });
+
+  if (telegramUserId !== undefined && Number.isSafeInteger(telegramUserId)) {
+    try {
+      await saveProfile(telegramUserId, chatId);
+    } catch (error) {
+      console.error("profile persistence failed", error instanceof Error ? error.message : "unknown");
+    }
+  }
 
   const commandMatch = text.match(/^\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\s|$)/i);
   const command = commandMatch?.[1]?.toLowerCase() ?? "";
@@ -132,10 +208,62 @@ Deno.serve(async (req: Request) => {
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
     case "help":
-      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/about — возможности прототипа";
+      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — проверить сохранение профиля\n/tasks — последние задания\n/daily — поставить ежедневный сценарий в очередь\n/about — возможности прототипа";
       break;
+    case "settings": {
+      if (telegramUserId === undefined || !serviceKey()) {
+        reply = "Хранилище настроек недоступно: не найден Telegram user ID или серверный ключ базы.";
+        break;
+      }
+      try {
+        const query = new URLSearchParams({
+          select: "telegram_user_id,settings,automation_enabled,updated_at,last_seen_at",
+          telegram_user_id: `eq.${telegramUserId}`,
+          limit: "1",
+        });
+        const rows = await databaseRequest<Array<{ settings: Record<string, unknown>; automation_enabled: boolean; updated_at: string }>>(
+          `psurvival_bot_profiles?${query.toString()}`,
+        );
+        const profile = rows[0];
+        reply = profile
+          ? `Профиль сохранён в Supabase.\nАвтоматизация включена: ${profile.automation_enabled ? "да" : "нет"}.\nНастройки: ${JSON.stringify(profile.settings)}\nИзменено: ${profile.updated_at}`
+          : "Профиль ещё не найден. Отправь /settings повторно.";
+      } catch {
+        reply = "Не удалось прочитать настройки из Supabase. Проверь состояние базы и повтори попытку.";
+      }
+      break;
+    }
+    case "tasks": {
+      if (telegramUserId === undefined || !serviceKey()) {
+        reply = "Очередь заданий недоступна: не найден Telegram user ID или серверный ключ базы.";
+        break;
+      }
+      try {
+        const jobs = await listUserJobs(telegramUserId);
+        reply = jobs.length
+          ? "Последние задания:\n" + jobs.map((job) => `• ${job.task_type}: ${job.status} (${job.id.slice(0, 8)})`).join("\n")
+          : "Заданий пока нет. Команда /daily создаёт тестовую запись в постоянной очереди.";
+      } catch {
+        reply = "Не удалось прочитать очередь заданий из Supabase.";
+      }
+      break;
+    }
+    case "daily": {
+      if (telegramUserId === undefined || !serviceKey()) {
+        reply = "Не удалось поставить задание в очередь: профиль или серверный ключ базы недоступен.";
+        break;
+      }
+      try {
+        const job = await enqueueDailyJob(telegramUserId, chatId, updateId);
+        reply = `Задание daily_routine сохранено в Supabase. ID: ${job.id}. Статус: ${job.status}.\nИсполнитель ещё не подключён, поэтому игровые действия пока не выполняются.`;
+      } catch (error) {
+        console.error("job enqueue failed", error instanceof Error ? error.message : "unknown");
+        reply = "Не удалось сохранить задание. Проверь состояние базы и повтори попытку.";
+      }
+      break;
+    }
     case "about":
-      reply = "Сейчас доступны Telegram-команды и облачный вебхук. Автоматизация игрового процесса, управление Android и выполнение игровых действий ещё не реализованы.";
+      reply = "Сейчас доступны Telegram-команды, постоянные профили и очередь заданий в Supabase. Исполнитель Android и реальные действия в игре ещё не подключены.";
       break;
     case "status": {
       const info = await telegramApi<{ url?: string; pending_update_count?: number; last_error_message?: string }>(botToken, "getWebhookInfo");
