@@ -49,7 +49,7 @@ function serviceKey(): string | null {
   return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? null;
 }
 
-async function databaseRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+async function databaseRequest<T>(path: string, method = "GET", body?: unknown, preferOverride?: string): Promise<T> {
   const key = serviceKey();
   if (!key) throw new Error("database_service_key_missing");
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
@@ -58,7 +58,7 @@ async function databaseRequest<T>(path: string, method = "GET", body?: unknown):
       apikey: key,
       authorization: `Bearer ${key}`,
       "content-type": "application/json",
-      prefer: method === "POST" ? "return=representation,resolution=merge-duplicates" : "return=representation",
+      prefer: preferOverride ?? (method === "POST" ? "return=representation,resolution=merge-duplicates" : "return=representation"),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -75,7 +75,7 @@ async function saveProfile(telegramUserId: number, chatId: number): Promise<void
   );
 }
 
-type StoredJob = { id: string; task_type: string; status: string; scheduled_at: string; created_at: string; last_error?: string | null };
+type StoredJob = { id: string; task_type: string; status: string; scheduled_at: string; created_at: string; last_error?: string | null; idempotency_key?: string | null };
 
 async function listUserJobs(telegramUserId: number): Promise<StoredJob[]> {
   const query = new URLSearchParams({
@@ -88,6 +88,7 @@ async function listUserJobs(telegramUserId: number): Promise<StoredJob[]> {
 }
 
 async function enqueueDailyJob(telegramUserId: number, chatId: number, updateId: number): Promise<StoredJob> {
+  const idempotencyKey = `telegram_update_${updateId}`;
   const rows = await databaseRequest<StoredJob[]>(
     "psurvival_bot_jobs?on_conflict=telegram_user_id,idempotency_key",
     "POST",
@@ -97,11 +98,20 @@ async function enqueueDailyJob(telegramUserId: number, chatId: number, updateId:
       task_type: "daily_routine",
       payload: { requested_via: "telegram" },
       status: "queued",
-      idempotency_key: `telegram_update_${updateId}`,
+      idempotency_key: idempotencyKey,
     }],
+    "return=representation,resolution=ignore-duplicates",
   );
-  if (!rows?.[0]) throw new Error("database_job_insert_returned_no_row");
-  return rows[0];
+  if (rows?.[0]) return rows[0];
+  const query = new URLSearchParams({
+    select: "id,task_type,status,scheduled_at,created_at,last_error,idempotency_key",
+    telegram_user_id: `eq.${telegramUserId}`,
+    idempotency_key: `eq.${idempotencyKey}`,
+    limit: "1",
+  });
+  const existing = await databaseRequest<StoredJob[]>(`psurvival_bot_jobs?${query.toString()}`);
+  if (existing?.[0]) return existing[0];
+  throw new Error("database_job_insert_returned_no_row");
 }
 
 Deno.serve(async (req: Request) => {
