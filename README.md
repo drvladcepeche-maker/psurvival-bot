@@ -47,6 +47,10 @@ supabase functions deploy telegram-bot --project-ref xevqbgjtxuveeqaiacvm --no-v
 
 The function intentionally uses `--no-verify-jwt` because Telegram does not send a Supabase user JWT. The handler instead validates Telegram's webhook secret header.
 
+## Automated validation
+
+GitHub Actions runs `deno check`, unit tests for webhook-secret comparison, and a live GET smoke test against the deployed Supabase function. The health check reports whether required secrets exist; it does not prove that Telegram webhook delivery or `/start` replies work.
+
 ## Current scope and limitations
 
 - Implemented commands: `/start`, `/help`; other text receives a short fallback reply.
