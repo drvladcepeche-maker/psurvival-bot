@@ -198,7 +198,7 @@ async function setProfileSetting(telegramUserId: number, key: string, rawValue: 
   const updated = await databaseRequest<Array<{ telegram_user_id: number }>>(
     `psurvival_bot_profiles?${query.toString()}`,
     "PATCH",
-    [{ settings, updated_at: new Date().toISOString() }],
+    { settings, updated_at: new Date().toISOString() },
   );
   if (!updated?.length) throw new Error("profile_setting_update_failed");
   return key === "daily_steps"
