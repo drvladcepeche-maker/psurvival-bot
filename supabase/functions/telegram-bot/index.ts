@@ -1,6 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { matchesSecret } from "./_shared/webhook_secret.ts";
 
+const WEBHOOK_URL = "https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/telegram-bot";
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -51,9 +53,9 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, service: "telegram-bot", configured: true, webhookRegistered: false, status: "webhook_secret_format_invalid" });
     }
 
-    const targetUrl = new URL(req.url);
-    targetUrl.search = "";
-    targetUrl.hash = "";
+    // Always register the canonical public HTTPS endpoint, not the request URL
+    // which may reflect an internal proxy scheme.
+    const targetUrl = new URL(WEBHOOK_URL);
     const info = await telegramApi<{ url?: string }>(botToken, "getWebhookInfo");
     if (!info.ok || !info.result) {
       return json({
