@@ -98,6 +98,7 @@ Deno.serve(async (req: Request) => {
         : `webhook_registration_error_${registration.error_code ?? "unknown"}`;
       return json({
         ok: true, service: "telegram-bot", configured: true, webhookRegistered: false, status,
+        diagnostic: description.replace(/[\\r\\n\\t]/g, " ").slice(0, 180),
       });
     }
 
