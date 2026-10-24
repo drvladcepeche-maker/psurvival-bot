@@ -53,10 +53,12 @@ GitHub Actions runs `deno check`, unit tests for webhook-secret comparison, and 
 
 ## Current scope and limitations
 
-- Implemented commands: `/start`, `/help`; other text receives a short fallback reply.
+- Implemented commands: `/start`, `/help`, `/status`, and `/about`; unknown commands receive a short fallback reply.
+- `/status` checks the current Telegram webhook URL and pending-update count through Telegram Bot API.
+- Telegram send failures are checked against both HTTP status and the Bot API JSON `ok` field; failures return HTTP 502 so Telegram can retry delivery.
 - A GET request to the function endpoint returns a basic health/configuration response.
 - The health response only confirms that secrets exist, not that the Telegram webhook or Bot API has been tested.
-- No game automation, Android control, persistent command queue, database schema, admin allowlist, or 24/7 game session is implemented yet.
+- No game automation, Android control, persistent command queue, game-account integration, admin allowlist, or 24/7 game session is implemented yet. The current deployment is a command/webhook foundation only.
 - Phone-only gameplay automation is a separate component and must be tested on the device.
 
 ## Safety
