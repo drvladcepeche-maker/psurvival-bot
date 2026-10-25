@@ -2,7 +2,7 @@ package com.psurvival.worker
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
 import android.view.ViewGroup
@@ -10,7 +10,6 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
-import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -18,6 +17,8 @@ class MainActivity : Activity() {
     private lateinit var workerId: EditText
     private lateinit var token: EditText
     private lateinit var status: TextView
+
+    private val gamePackage = "com.global.ztmslg"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +58,38 @@ class MainActivity : Activity() {
             }
         }
         root.addView(save, matchWidth())
+
+        root.addView(TextView(this).apply {
+            text = "Игровой аккаунт"
+            textSize = 20f
+        }, matchWidth())
+        root.addView(TextView(this).apply {
+            text = "Вход выполняется в самой игре. Worker не запрашивает и не сохраняет пароль Google или игровой пароль."
+            textSize = 14f
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Проверить, установлена ли игра"
+            setOnClickListener { status.text = checkGameInstalled() }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Открыть игру — вход через Google"
+            setOnClickListener {
+                val result = launchGame()
+                status.text = if (result == null) {
+                    "Игра открыта. На её экране выбери штатный вход через Google и подтверди нужный аккаунт."
+                } else result
+            }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Открыть игру — вход по email"
+            setOnClickListener {
+                val result = launchGame()
+                status.text = if (result == null) {
+                    "Игра открыта. На её экране выбери вход по email и введи данные непосредственно в игре."
+                } else result
+            }
+        }, matchWidth())
+
         root.addView(Button(this).apply {
             text = "Открыть настройки службы доступности"
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
@@ -85,6 +118,29 @@ class MainActivity : Activity() {
         }
         root.addView(status, matchWidth())
         setContentView(root)
+    }
+
+    private fun checkGameInstalled(): String {
+        return try {
+            packageManager.getPackageInfo(gamePackage, 0)
+            "Игра обнаружена: $gamePackage"
+        } catch (_: PackageManager.NameNotFoundException) {
+            "Игра не обнаружена. Установи нужную версию Puzzles & Survival или проверь идентификатор пакета."
+        } catch (error: Exception) {
+            "Не удалось проверить игру: ${error.message}"
+        }
+    }
+
+    private fun launchGame(): String? {
+        val launch = packageManager.getLaunchIntentForPackage(gamePackage)
+            ?: return checkGameInstalled()
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(launch)
+            null
+        } catch (error: Exception) {
+            "Не удалось открыть игру: ${error.message}"
+        }
     }
 
     private fun matchWidth() = LinearLayout.LayoutParams(
