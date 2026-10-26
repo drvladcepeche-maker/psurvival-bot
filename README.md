@@ -77,3 +77,11 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 ## Safety
 
 Keep secrets out of source control. Do not use this prototype to bypass game protections or anti-cheat systems.
+
+
+## Game scenario research and integration verification
+
+- [Gameplay scenario catalogue](docs/gameplay-scenarios.md) — source-backed player workflows and conservative UI templates; exact labels must be checked on the current game build.
+- [Integration test matrix](docs/integration-test-matrix.md) — end-to-end checks for Telegram, Supabase queue, Android worker and game launch.
+
+These documents do not claim that a physical-device test has already passed. The current worker executes UI steps but cannot semantically verify game state or reliably infer screens from visual content.
