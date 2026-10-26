@@ -158,6 +158,9 @@ class WorkerAccessibilityService : AccessibilityService() {
     }
 
     private fun api(token: String, body: JSONObject): JSONObject {
+        val configuredWorkerId = getSharedPreferences("worker", MODE_PRIVATE)
+            .getString("worker_id", "").orEmpty().trim()
+        if (configuredWorkerId.isNotEmpty()) body.put("worker_id", configuredWorkerId)
         val connection = URL("https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/psurvival-worker")
             .openConnection() as HttpURLConnection
         try {
