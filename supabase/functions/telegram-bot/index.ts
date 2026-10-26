@@ -447,7 +447,7 @@ Deno.serve(async (req: Request) => {
       break;
     }
     case "about":
-      reply = "Работают Telegram-команды, постоянные профили, очередь заданий и серверный протокол исполнителя. Android-клиент, который взаимодействует с интерфейсом игры, ещё не реализован.";
+      reply = "Реализованы Telegram-команды, постоянные профили, очередь заданий, API исполнителя и Android-клиент AccessibilityService. Выполнение UI-шагов предусмотрено, но готовые игровые сценарии и проверка на физическом устройстве ещё требуют валидации.";
       break;
     case "status": {
       const info = await telegramApi<{ url?: string; pending_update_count?: number; last_error_message?: string }>(botToken, "getWebhookInfo");
