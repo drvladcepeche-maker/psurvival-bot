@@ -24,6 +24,7 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 | INT-07 | Telegram retries the same update ID | Idempotency prevents duplicate job | Single queue row for key |
 | INT-08 | Worker POST without bearer token | HTTP 401 | HTTP response |
 | INT-09 | Worker POST with invalid token | HTTP 401 | HTTP response |
+| INT-09a | Valid token but mismatched Worker ID in request body | HTTP 403 | HTTP response |
 | INT-10 | Registered worker claims a job | Job becomes leased/running for that worker | Queue row + event |
 | INT-11 | Android executes launch + wait | Game opens; job reaches succeeded | Phone observation + `/tasks` |
 | INT-12 | Invalid step fails | Job reaches failed or retry state with useful `last_error` | Queue row + event |
@@ -45,7 +46,7 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 
 - Android routine execution currently reports the configured step count as `executed_steps`; this is not a semantic verification of the game outcome.
 - `tap_coordinates` values are interpreted as screen pixels by the Android client. Calibrate per display resolution/orientation.
-- The worker service stores a local Worker ID field, while the server authenticates by token and resolves the registered worker ID from the token hash. Ensure UI and documentation make this behavior clear.
+- The Android client now includes its configured Worker ID in API requests, and the server rejects a non-empty ID that does not match the authenticated token. Older clients that omit the field remain temporarily compatible; test INT-09a after deploying both updated components.
 - The Android service's current failure path can lose a failure-reporting error if the API is unavailable; inspect queue lease/retry state before assuming a job was handled.
 - Device screen lock, process death, accessibility-service restarts, and intermittent network require physical-device tests.
 
