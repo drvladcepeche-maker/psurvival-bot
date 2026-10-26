@@ -26,4 +26,5 @@ if [ "${#TOKEN}" -ne 64 ]; then echo "Invalid token length"; unset TOKEN; exit 1
 printf '{"token":"%s"}\n' "$TOKEN" > "$HOME/.config/termux-bridge/config.json"
 chmod 600 "$HOME/.config/termux-bridge/config.json"
 unset TOKEN
-echo "Installed. Start with: python ~/bin/termux-bridge.py"
+echo "Installation complete; starting bridge worker now."
+exec python "$HOME/bin/termux-bridge.py"
