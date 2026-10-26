@@ -36,8 +36,8 @@ def run_job(job):
         "git_status": ["git", "-C", str(BASE), "status", "--short", "--branch"],
         "git_log": ["git", "-C", str(BASE), "log", "-5", "--oneline"],
         "git_diff_stat": ["git", "-C", str(BASE), "diff", "--stat"],
-        "gradle_test": ["./gradlew", "test"],
-        "gradle_assemble_debug": ["./gradlew", "assembleDebug"],
+        "gradle_test": ["bash", "./gradlew", "test"],
+        "gradle_assemble_debug": ["bash", "./gradlew", "assembleDebug"],
     }
     if kind not in commands:
         return 2, "", "Command type not allow-listed"
