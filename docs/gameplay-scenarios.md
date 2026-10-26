@@ -91,3 +91,11 @@ For every added UI routine, record:
 - whether the routine was tested twice from a clean starting state.
 
 Do not commit raw logcat, screenshots containing account identifiers, APKs, tokens, cookies, or unredacted network captures.
+
+## Review and community feedback considered
+
+- [Apple App Store reviews](https://apps.apple.com/us/app/puzzles-survival/id1517980891?platform=iphone&see-all=reviews) contain both positive comments about social/alliance play and varied events and negative reports about monetization, repetitive progression, bugs and customer support. These are individual opinions, not verified defect reports.
+- [Appshunter review aggregation](https://appshunter.io/ios/app/puzzles-and-survival/id1517980891) summarizes the same mixed pattern across user-written reviews; its sentiment labels are third-party aggregation, not an official measurement.
+- [Reddit beginner guide](https://www.reddit.com/r/PuzzlesandSurvival/comments/mqhtc7) emphasizes active alliances and their research/event rewards. It is an older player guide and should be treated as strategic context, not a current UI specification.
+
+Design implications: keep routines short and auditable; prioritize repeatable low-risk checks (launch, screen navigation, reminders); do not automate purchases, premium-currency spending, battle dispatches or irreversible choices; require explicit device observation before using selectors or coordinates. Reviews cannot establish API behavior or current screen layout.
