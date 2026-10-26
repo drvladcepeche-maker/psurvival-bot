@@ -63,6 +63,10 @@ Deno.serve(async (req: Request) => {
     );
     const device = devices[0];
     if (!device || device.owner_telegram_user_id == null) return json({ ok: false, error: "Invalid worker token" }, 401);
+    const requestedWorkerId = typeof body.worker_id === "string" ? body.worker_id.trim() : "";
+    if (requestedWorkerId && requestedWorkerId !== device.worker_id) {
+      return json({ ok: false, error: "Worker ID does not match the authenticated token" }, 403);
+    }
     const workerId = device.worker_id;
     const action = body.action;
 
