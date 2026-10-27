@@ -443,8 +443,8 @@ Deno.serve(async (req: Request) => {
     }
     case "scenarios":
       reply = "Сценарии (для точек сначала нужна калибровка):\\n" +
-        Object.entries(SCENARIOS).map(([name, item]) => `• ${name} — ${item.title}`).join("\\n") +
-        "\\nКалибровка: /point daily_rewards x y, /point alliance x y, /point tavern x y, /point mail x y. Значения x/y — 0–10000.";
+        Object.entries(SCENARIOS).map(([name, item]) => `• ${name} — ${item.title}`).join("\n") +
+        "\nКалибровка: /point daily_rewards x y, /point alliance x y, /point tavern x y, /point mail x y. Значения x/y — 0–10000.";
       break;
     case "scenario": {
       if (telegramUserId === undefined || !serviceKey()) { reply = "Очередь заданий недоступна."; break; }
@@ -531,7 +531,7 @@ Deno.serve(async (req: Request) => {
       break;
     }
     case "about":
-      reply = "Реализованы Telegram-команды, постоянные профили, очередь заданий, API исполнителя и Android-клиент AccessibilityService. Выполнение UI-шагов предусмотрено, но готовые игровые сценарии и проверка на физическом устройстве ещё требуют валидации.";
+      reply = "Реализованы Telegram-команды, постоянные профили, очередь заданий, API исполнителя и Android-клиент. Доступны /scenarios, /scenario, /point; координаты точек задаёт пользователь. Нажатия по экрану и игровые сценарии требуют проверки на вашем устройстве.";
       break;
     case "status": {
       const info = await telegramApi<{ url?: string; pending_update_count?: number; last_error_message?: string }>(botToken, "getWebhookInfo");
