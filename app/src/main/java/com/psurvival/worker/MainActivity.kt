@@ -171,11 +171,11 @@ class MainActivity : Activity() {
                 val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
                 val packageName = activityInfo.packageName
                 val label = resolveInfo.loadLabel(packageManager)?.toString().orEmpty()
-                val normalized = label.lowercase()
+                val normalized = label.lowercase(java.util.Locale.ROOT)
                 val isGame = packageName == defaultGamePackage ||
                     packageName.contains("ztmslg", ignoreCase = true) ||
-                    (normalized.contains("puzzles") && normalized.contains("survival")) ||
-                    (normalized.contains("puzzle") && normalized.contains("survival"))
+                    (normalized.contains("puzzle") && normalized.contains("survival")) ||
+                    (normalized.contains("пазл") && normalized.contains("выжив"))
                 if (isGame) GameTarget(label.ifBlank { packageName }, packageName) else null
             }
             .distinctBy { it.packageName }
