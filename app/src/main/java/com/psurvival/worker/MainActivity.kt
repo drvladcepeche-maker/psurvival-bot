@@ -182,6 +182,21 @@ class MainActivity : Activity() {
                 refreshRecordedSteps()
             }
         }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Скопировать команду для Telegram"
+            setOnClickListener {
+                val json = prefs.getString("recorded_game_steps", "[]").orEmpty()
+                val steps = runCatching { org.json.JSONArray(json) }.getOrNull()
+                if (steps == null || steps.length() == 0) {
+                    status.text = "Сценарий пуст: сначала запиши игровые действия."
+                } else {
+                    val command = "/set daily_steps $json"
+                    val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("P&S Worker Telegram command", command))
+                    status.text = "Команда /set daily_steps скопирована. Проверь сценарий перед отправкой боту."
+                }
+            }
+        }, matchWidth())
         val recordingOutput = TextView(this).apply {
             textSize = 12f
             setTextIsSelectable(true)
