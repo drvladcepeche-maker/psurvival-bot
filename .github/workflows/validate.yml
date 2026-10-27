@@ -28,7 +28,8 @@ jobs:
       - name: Syntax-check vendored Termux bridge
         run: |
           node --check termux-bridge/bridge.mjs
-          node --check termux-bridge/apk-inspect.mjs\n      - name: Verify worker endpoint rejects unauthenticated calls
+          node --check termux-bridge/apk-inspect.mjs
+      - name: Verify worker endpoint rejects unauthenticated calls
         run: |
           node --input-type=module <<'NODE'
           const url = "https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/psurvival-worker";
