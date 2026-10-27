@@ -2,7 +2,7 @@ name: Validate Telegram bot
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/game-automation-and-bridge]
   pull_request:
     branches: [main]
 
