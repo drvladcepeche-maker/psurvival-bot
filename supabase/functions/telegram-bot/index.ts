@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { matchesSecret } from "./_shared/webhook_secret.ts";
+import { sanitizeDiagnostic } from "./_shared/diagnostic.ts";
 
 const WEBHOOK_URL = "https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/telegram-bot";
 
