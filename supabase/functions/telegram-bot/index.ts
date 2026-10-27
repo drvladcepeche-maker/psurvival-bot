@@ -509,7 +509,7 @@ Deno.serve(async (req: Request) => {
       try {
         const jobs = await listUserJobs(telegramUserId);
         reply = jobs.length
-          ? "Последние задания:\\n" + jobs.map(formatJobSummary).join("\\n")
+          ? "Последние задания:\n" + jobs.map(formatJobSummary).join("\n")
           : "Заданий пока нет. Команда /daily создаёт тестовую запись в постоянной очереди.";
       } catch {
         reply = "Не удалось прочитать очередь заданий из Supabase.";
