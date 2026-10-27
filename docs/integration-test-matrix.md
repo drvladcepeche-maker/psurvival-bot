@@ -25,6 +25,9 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 | INT-08 | Worker POST without bearer token | HTTP 401 | HTTP response |
 | INT-09 | Worker POST with invalid token | HTTP 401 | HTTP response |
 | INT-09a | Valid token but mismatched Worker ID in request body | HTTP 403 | HTTP response |
+| INT-10a | Send `/point daily_rewards 5000 5000` | Profile setting persists; invalid values rejected | Telegram reply + profile row |
+| INT-10b | Send `/scenario daily_rewards` before calibration | Bot refuses to enqueue and names missing point | Telegram reply; no queue row |
+| INT-10c | Calibrate point, then send `/scenario daily_rewards` | Job is queued with launch, wait, relative tap, wait steps | Telegram reply + queue payload |
 | INT-10 | Registered worker claims a job | Job becomes leased/running for that worker | Queue row + event |
 | INT-11 | Android executes launch + wait | Game opens; job reaches succeeded | Phone observation + `/tasks` |
 | INT-12 | Invalid step fails | Job reaches failed or retry state with useful `last_error` | Queue row + event |
@@ -47,6 +50,9 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 - Android routine execution currently reports the configured step count as `executed_steps`; this is not a semantic verification of the game outcome.
 - `tap_coordinates` values are interpreted as screen pixels by the Android client. Calibrate per display resolution/orientation.
 - The Android client now includes its configured Worker ID in API requests, and the server rejects a non-empty ID that does not match the authenticated token. Older clients that omit the field remain temporarily compatible; test INT-09a after deploying both updated components.
+- Screen-relative actions `tap_relative` and `tap_point` use 0–10000 values scaled against current display metrics. `swipe` uses the same normalized range. `/point` stores a named point in profile settings; `/scenario` queues only a small template after required points exist.
+- Built-in scenarios are entry-point taps, not verified game routines. The worker currently cannot confirm that a tap opened a screen or that a reward was claimed; confirm results on the phone and in `/tasks`.
+
 - The Android service's current failure path can lose a failure-reporting error if the API is unavailable; inspect queue lease/retry state before assuming a job was handled.
 - Device screen lock, process death, accessibility-service restarts, and intermittent network require physical-device tests.
 
