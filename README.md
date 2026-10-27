@@ -21,6 +21,24 @@ Worker API endpoint:
 
 The function is deployed separately from this repository; deploy this source when making code changes.
 
+## Android worker quick start
+
+1. Download the debug APK from the latest successful [GitHub Actions build](https://github.com/drvladcepeche-maker/psurvival-bot/actions/workflows/validate.yml).
+2. Install it on the Android phone that has Puzzles & Survival. Open **P&S Worker**.
+3. In a private Telegram chat with the bot, send `/register_worker`; enter the returned worker ID and token in the app.
+4. Enable **P&S Worker** under Android Settings → Accessibility → Installed apps/services. Keep the service enabled and the phone online.
+5. Send `/scenarios` to list the small built-in scenarios.
+
+The available scenario templates are deliberately minimal:
+- `/scenario launch` opens `com.global.ztmslg` and waits.
+- `/scenario daily_rewards` opens the game, taps one calibrated screen point, and waits. It does **not** verify that a reward was claimed or navigate through additional screens.
+- `/scenario alliance`, `/scenario tavern`, and `/scenario mail` similarly require a calibrated entry point; they do not automate the full feature.
+
+Calibrate each required point while the game is open, using screen-relative values from 0 to 10000:
+`/point daily_rewards 8500 2400`
+
+Replace the example values with the actual location on the device. Then issue `/scenario daily_rewards`. To run a custom sequence, use `/set daily_steps <JSON array>` followed by `/daily`. Do not use guessed coordinates or repeat jobs if the previous job is still running.
+
 ## Required Supabase secrets
 
 Configure these as Edge Function secrets in the Supabase dashboard (do not commit real values):
@@ -57,7 +75,7 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 
 ## Current scope and limitations
 
-- Implemented commands: `/start`, `/help`, `/status`, `/settings`, `/tasks`, `/daily`, `/register_worker`, `/rotate_worker`, and `/about`.
+- Implemented commands: `/start`, `/help`, `/status`, `/settings`, `/set`, `/tasks`, `/daily`, `/scenarios`, `/scenario`, `/point`, `/register_worker`, `/rotate_worker`, and `/about`.
 - Telegram user profiles are persisted in `psurvival_bot_profiles`; settings storage is ready for additional user-configurable fields.
 - `/daily` enqueues a durable `daily_routine` job with an idempotency key, so Telegram retries do not create duplicate tasks. Configure `daily_steps` first; otherwise the executor marks the job as unconfigured rather than pretending it ran.
 - `/tasks` reads the most recent tasks from Supabase.
