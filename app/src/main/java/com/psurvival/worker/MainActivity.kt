@@ -190,12 +190,12 @@ class MainActivity : Activity() {
                 }
                 status.text = "Служба доступности подключалась: " +
                     (if (connectedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(connectedAt)) else "нет отметки") +
-                    "\\nНачало записи: " +
+                    "\nНачало записи: " +
                     (if (startedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(startedAt)) else "не запускалась") +
-                    "\\nСобытий игры во время записи: $eventTotal" +
-                    "\\nПоследнее событие: $eventName" +
-                    "\\nПакет: " + (lastPackage.ifBlank { "нет" }) +
-                    "\\nВремя последнего события: " +
+                    "\nСобытий игры во время записи: $eventTotal" +
+                    "\nПоследнее событие: $eventName" +
+                    "\nПакет: " + (lastPackage.ifBlank { "нет" }) +
+                    "\nВремя последнего события: " +
                     (if (lastAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(lastAt)) else "нет")
             }
         }, matchWidth())
