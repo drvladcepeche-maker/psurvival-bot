@@ -10,7 +10,7 @@ const APK_PATHS = [
 ];
 const MAX_APK_BYTES = 100 * 1024 * 1024;
 const MAX_EXTRACT_BYTES = 150 * 1024 * 1024;
-const MAX_REPORT = 24000;
+const MAX_REPORT = 28000;
 const ASSET_PACK_PATH = join(APK_DIR, "split_abPack1.apk");
 const MAX_CENTRAL_DIRECTORY = 32 * 1024 * 1024;
 const MAX_ASSET_TEXT_TOTAL = 8 * 1024 * 1024;
@@ -78,6 +78,58 @@ function extractEntry(apk, entry) {
   if (entry.method === 0) return compressed;
   if (entry.method === 8) return inflateRawSync(compressed, { maxOutputLength: MAX_EXTRACT_BYTES });
   return null;
+}
+
+function parseIl2CppMetadata(buffer) {
+  if (buffer.length < 8 || buffer.readUInt32LE(0) !== 0xfab11baf) {
+    return { summary: "Metadata magic is absent; the file may be protected or not IL2CPP metadata.", strings: [] };
+  }
+  const version = buffer.readUInt32LE(4);
+  const pairs = [];
+  for (let i = 8; i + 8 <= Math.min(buffer.length, 8 + 40 * 8); i += 8) {
+    pairs.push({ offset: buffer.readUInt32LE(i), size: buffer.readUInt32LE(i + 4) });
+  }
+  const literalTable = pairs[0];
+  const literalData = pairs[1];
+  const stringTable = pairs[2];
+  const safeRange = section => section && section.offset <= buffer.length &&
+    section.size <= buffer.length - section.offset;
+  const literals = [];
+  if (safeRange(literalTable) && safeRange(literalData) && literalTable.size % 8 === 0) {
+    const count = Math.min(literalTable.size / 8, 200000);
+    for (let i = 0; i < count; i++) {
+      const p = literalTable.offset + i * 8;
+      const offset = buffer.readUInt32LE(p);
+      const length = buffer.readUInt32LE(p + 4);
+      if (offset > literalData.size || length > literalData.size - offset || length > 4096) continue;
+      const value = buffer.toString("utf8", literalData.offset + offset, literalData.offset + offset + length);
+      if (value && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value)) literals.push(value);
+    }
+  }
+  const stringTableBytes = safeRange(stringTable) ? stringTable.size : 0;
+  const metadataStrings = [];
+  if (stringTableBytes > 0) {
+    const end = stringTable.offset + stringTable.size;
+    let start = stringTable.offset;
+    for (let i = stringTable.offset; i < end; i++) {
+      if (buffer[i] !== 0) continue;
+      if (i - start >= 3 && i - start <= 512) {
+        metadataStrings.push(buffer.toString("utf8", start, i));
+      }
+      start = i + 1;
+    }
+  }
+  const relevantRx = /api|https?:|wss?:|socket|gateway|server|login|auth|account|player|battle|march|request|response|protobuf|messagepack|heartbeat|resource|hero|alliance|activity|token|session|endpoint|version|channel|config|command|cmd|net|http|rpc|url/i;
+  const relevant = [...new Set([...literals, ...metadataStrings].filter(s => relevantRx.test(s)))].slice(0, 240);
+  return {
+    summary: "IL2CPP metadata: magic=0xFAB11BAF; version=" + version +
+      "; headerPairs=" + pairs.length +
+      "; stringLiteralRecords=" + (literalTable && literalTable.size % 8 === 0 ? literalTable.size / 8 : "invalid") +
+      "; stringLiteralDataBytes=" + (literalData ? literalData.size : "n/a") +
+      "; metadataStringTableBytes=" + stringTableBytes +
+      "; metadataStringsDecoded=" + metadataStrings.length,
+    strings: relevant,
+  };
 }
 
 function scrubUrl(raw) {
@@ -209,6 +261,7 @@ export async function inspectApk() {
   const errors = [];
   let totalExtracted = 0;
   const apkSummaries = [];
+  let il2cppMetadata = null;
   for (const path of APK_PATHS) {
     let info;
     try { info = await stat(path); } catch { errors.push("Not found: " + path.split("/").pop()); continue; }
@@ -247,6 +300,10 @@ export async function inspectApk() {
       if (!data) continue;
       totalExtracted += data.length;
       inspected.push(path.split("/").pop() + ":" + entry.name);
+      if (entry.name.endsWith("global-metadata.dat")) {
+        il2cppMetadata = parseIl2CppMetadata(data);
+        for (const value of il2cppMetadata.strings) strings.push(value);
+      }
       for (const value of printableStrings(data)) strings.push(value);
     }
   }
@@ -273,11 +330,34 @@ export async function inspectApk() {
   ];
   const lower = all.toLowerCase();
   const foundMarkers = markers.filter(m => lower.includes(m));
+  const networkCandidates = [...new Set(strings
+    .filter(s => /puzzles|37games|firebaseio|https?:\/\/|\b(api|server|gateway|login|auth|config|endpoint|channel|region|cdn|socket|websocket|grpc|protobuf|messagepack|request|response|heartbeat|account|role|player|battle|march|alliance|rpc|url|host)\b/i.test(s))
+    .map(s => s.replace(/(bearer\s+)[A-Za-z0-9._~-]+/ig, "$1[REDACTED]")
+      .replace(/((?:token|secret|password|api[_-]?key|authorization)\s*[:=]\s*)[^\s,;]{6,}/ig, "$1[REDACTED]")
+      .slice(0, 500)))];
+  const networkScore = s => {
+    const v = s.toLowerCase();
+    let score = 0;
+    if (/puzzles|37games|firebaseio/.test(v)) score += 100;
+    if (/https?:\/\//.test(v)) score += 30;
+    if (/api|server|gateway|login|auth|config|endpoint|channel|region|socket|websocket|protobuf|messagepack|heartbeat|account|role|player|battle|march|alliance|rpc/.test(v)) score += 15;
+    if (/appsflyer|facebook|google|android\.com|w3\.org|example\.com|unity3d\.com|tiktok|twitter|vk\.com/.test(v)) score -= 20;
+    return score;
+  };
+  networkCandidates.sort((a, b) => networkScore(b) - networkScore(a) || a.localeCompare(b));
   const report = [
     "APK static inspection report (refined)",
     "Files: " + apkSummaries.join(" | "),
     "Extracted bytes: " + totalExtracted,
     "Inspected entries: " + inspected.join(", "),
+    "",
+    "GAME / NETWORK STRING CANDIDATES (ranked; static, not proof of live API)",
+    ...networkCandidates.slice(0, 160),
+    "",
+    "IL2CPP METADATA SUMMARY",
+    il2cppMetadata ? il2cppMetadata.summary : "global-metadata.dat was not extracted.",
+    "IL2CPP METADATA STRINGS (filtered; up to 160)",
+    ...(il2cppMetadata ? il2cppMetadata.strings : []),
     "",
     "ASSET PACK INDEX",
     assetPack.summary,
@@ -297,8 +377,6 @@ export async function inspectApk() {
     "NETWORK / SDK MARKERS",
     ...foundMarkers.sort(),
     "",
-    "IL2CPP / GAME-PROTOCOL SIGNALS",
-    ...[...new Set(strings.filter(s => /il2cpp|global-metadata|protobuf|messagepack|websocket|gateway|heartbeat|login|session|request|response|battle|march|alliance|player|serverlist|server_list|https?:\/\//i.test(s)).map(s => s.replace(/(bearer\s+)[A-Za-z0-9._~-]+/ig, "$1[REDACTED]").replace(/((?:token|secret|password|api[_-]?key|authorization)\s*[:=]\s*)[^\s,;]{6,}/ig, "$1[REDACTED]").slice(0, 300)))].sort().slice(0, 100),
     "",
     "Caveats: Static strings do not prove that an endpoint is active or public. URL templates may be assembled at runtime. This pass prioritizes global-metadata.dat and libil2cpp.so if they exist in the scanned APKs. The large asset pack is indexed by ZIP central directory and only small text/config entries are selectively extracted; binary Unity assets and other splits are not fully analyzed. No live service calls are made."
   ].join("\n").slice(0, MAX_REPORT);
