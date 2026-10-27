@@ -62,13 +62,22 @@ class WorkerAccessibilityService : AccessibilityService() {
             if (gap >= 700L) {
                 steps.put(JSONObject().put("type", "wait").put("duration_ms", gap.coerceIn(700L, 10_000L)))
             }
-            val label = (source.text?.toString() ?: source.contentDescription?.toString())
-                ?.trim()?.take(80).orEmpty()
-            val step = JSONObject()
-                .put("type", "tap_relative")
-                .put("x", x)
-                .put("y", y)
-            if (label.isNotEmpty()) step.put("label", label)
+            val textLabel = source.text?.toString()?.trim()?.take(120).orEmpty()
+            val descriptionLabel = source.contentDescription?.toString()?.trim()?.take(120).orEmpty()
+            // Prefer semantic selectors so recorded scenarios survive small layout changes.
+            // Fall back to normalized coordinates when Unity exposes no accessible label.
+            val step = when {
+                textLabel.isNotEmpty() -> JSONObject()
+                    .put("type", "tap_text")
+                    .put("text", textLabel)
+                descriptionLabel.isNotEmpty() -> JSONObject()
+                    .put("type", "tap_description")
+                    .put("description", descriptionLabel)
+                else -> JSONObject()
+                    .put("type", "tap_relative")
+                    .put("x", x)
+                    .put("y", y)
+            }
             steps.put(step)
             prefs.edit()
                 .putString("recorded_game_steps", steps.toString())
