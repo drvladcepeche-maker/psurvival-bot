@@ -3,10 +3,18 @@ package com.psurvival.worker
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.FrameLayout
+import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -22,10 +30,22 @@ class WorkerAccessibilityService : AccessibilityService() {
     @Volatile private var activeJobId: String? = null
     @Volatile private var lastHeartbeatAt = 0L
     private val capturedUiSnapshots = mutableListOf<JSONObject>()
+    private val recordingLock = Any()
+
+    private var recordingRoot: FrameLayout? = null
+    private var recordingBadge: TextView? = null
+    private var lastRecordedTouchAt = 0L
+    private var overlayTouchDownX = 0f
+    private var overlayTouchDownY = 0f
+    private var overlayTouchDownAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        getSharedPreferences("worker", MODE_PRIVATE).edit()
+            .putLong("accessibility_service_connected_at", System.currentTimeMillis())
+            .apply()
         executor.scheduleWithFixedDelay({ pollOrHeartbeat() }, 2, 10, TimeUnit.SECONDS)
+        executor.scheduleWithFixedDelay({ syncRecordingOverlay() }, 1, 1, TimeUnit.SECONDS)
     }
 
     override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
@@ -37,8 +57,19 @@ class WorkerAccessibilityService : AccessibilityService() {
         val activePackage = event.packageName?.toString().orEmpty()
         if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") return
 
-        // Record only explicit accessibility click events. No screenshots, text fields,
-        // passwords, chat contents, or events from other apps are captured.
+        // Diagnostics only: count events, never store free-form UI text here.
+        synchronized(recordingLock) {
+            val total = prefs.getLong("record_diag_total", 0L) + 1L
+            prefs.edit()
+                .putLong("record_diag_total", total)
+                .putInt("record_diag_last_type", event.eventType)
+                .putString("record_diag_last_package", activePackage)
+                .putLong("record_diag_last_at", System.currentTimeMillis())
+                .apply()
+        }
+
+        // Secondary path: classical accessibility click nodes (works for normal Android UI).
+        // Unity games usually skip this path; the overlay recorder covers those taps.
         if (event.eventType != android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) return
         val source = event.source ?: return
         if (source.isEditable || source.className?.toString().orEmpty().contains("EditText", true)) return
@@ -50,50 +81,196 @@ class WorkerAccessibilityService : AccessibilityService() {
         if (metrics.widthPixels <= 0 || metrics.heightPixels <= 0) return
         val x = (bounds.centerX() * 10000 / metrics.widthPixels).coerceIn(0, 10000)
         val y = (bounds.centerY() * 10000 / metrics.heightPixels).coerceIn(0, 10000)
+        val textLabel = source.text?.toString()?.trim()?.take(120).orEmpty()
+        val descriptionLabel = source.contentDescription?.toString()?.trim()?.take(120).orEmpty()
+        val step = when {
+            textLabel.isNotEmpty() -> JSONObject()
+                .put("type", "tap_text")
+                .put("text", textLabel)
+            descriptionLabel.isNotEmpty() -> JSONObject()
+                .put("type", "tap_description")
+                .put("description", descriptionLabel)
+            else -> JSONObject()
+                .put("type", "tap_relative")
+                .put("x", x)
+                .put("y", y)
+        }
+        appendRecordedStep(step, event.eventTime)
+    }
+
+    override fun onInterrupt() = Unit
+
+    override fun onDestroy() {
+        mainHandler.post { removeRecordingOverlay() }
+        executor.shutdownNow()
+        super.onDestroy()
+    }
+
+    private fun syncRecordingOverlay() {
+        val prefs = getSharedPreferences("worker", MODE_PRIVATE)
+        val enabled = prefs.getBoolean("record_game_actions", false)
+        mainHandler.post {
+            if (enabled) ensureRecordingOverlay() else removeRecordingOverlay()
+            updateRecordingBadge()
+        }
+    }
+
+    private fun ensureRecordingOverlay() {
+        if (recordingRoot != null) return
+        val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(0x22000000)
+            isClickable = true
+            isFocusable = false
+            setOnTouchListener { _, event -> handleOverlayTouch(event) }
+        }
+        val badge = TextView(this).apply {
+            text = "REC"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            setPadding(24, 16, 24, 16)
+            setBackgroundColor(0xCCB71C1C.toInt())
+        }
+        val badgeParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = 48
+        }
+        root.addView(badge, badgeParams)
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        )
+        params.gravity = Gravity.TOP or Gravity.START
+        try {
+            windowManager.addView(root, params)
+            recordingRoot = root
+            recordingBadge = badge
+            updateRecordingBadge()
+        } catch (_: Throwable) {
+            recordingRoot = null
+            recordingBadge = null
+        }
+    }
+
+    private fun removeRecordingOverlay() {
+        val root = recordingRoot ?: return
+        val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        runCatching { windowManager.removeView(root) }
+        recordingRoot = null
+        recordingBadge = null
+    }
+
+    private fun handleOverlayTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                overlayTouchDownX = event.rawX
+                overlayTouchDownY = event.rawY
+                overlayTouchDownAt = System.currentTimeMillis()
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val upX = event.rawX
+                val upY = event.rawY
+                val dt = System.currentTimeMillis() - overlayTouchDownAt
+                val moved = kotlin.math.hypot(
+                    (upX - overlayTouchDownX).toDouble(),
+                    (upY - overlayTouchDownY).toDouble(),
+                )
+                // Ignore long-press / drag noise; record only short taps.
+                if (dt <= 900L && moved <= 48.0) {
+                    recordOverlayTap(upX, upY)
+                }
+                // Always re-dispatch so the game still receives the interaction.
+                dispatchTap(upX, upY)
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> return true
+        }
+        return true
+    }
+
+    private fun recordOverlayTap(rawX: Float, rawY: Float) {
+        val now = System.currentTimeMillis()
+        // Debounce accidental double captures from gesture + node paths.
+        if (now - lastRecordedTouchAt < 250L) return
+        lastRecordedTouchAt = now
+
+        val metrics = resources.displayMetrics
+        if (metrics.widthPixels <= 0 || metrics.heightPixels <= 0) return
+        val x = (rawX * 10000f / metrics.widthPixels).toInt().coerceIn(0, 10000)
+        val y = (rawY * 10000f / metrics.heightPixels).toInt().coerceIn(0, 10000)
+        val step = JSONObject()
+            .put("type", "tap_relative")
+            .put("x", x)
+            .put("y", y)
+        appendRecordedStep(step, now)
+        mainHandler.post { updateRecordingBadge() }
+    }
+
+    private fun appendRecordedStep(step: JSONObject, recordedAt: Long) {
+        val prefs = getSharedPreferences("worker", MODE_PRIVATE)
+        if (!prefs.getBoolean("record_game_actions", false)) return
         synchronized(recordingLock) {
-            val current = System.currentTimeMillis()
-            val recordedAt = event.eventTime
             val steps = runCatching {
                 JSONArray(prefs.getString("recorded_game_steps", "[]").orEmpty())
             }.getOrDefault(JSONArray())
             if (steps.length() >= 500) return
+
+            // Deduplicate identical relative taps that arrive from both overlay and node paths.
+            if (steps.length() > 0) {
+                val last = steps.optJSONObject(steps.length() - 1)
+                if (last != null &&
+                    last.optString("type") == step.optString("type") &&
+                    last.optInt("x", -1) == step.optInt("x", -2) &&
+                    last.optInt("y", -1) == step.optInt("y", -2)
+                ) {
+                    return
+                }
+            }
+
             val previous = prefs.getLong("record_last_event_time", 0L)
             val gap = if (previous > 0L && recordedAt > previous) recordedAt - previous else 0L
             if (gap >= 700L) {
-                steps.put(JSONObject().put("type", "wait").put("duration_ms", gap.coerceIn(700L, 10_000L)))
-            }
-            val textLabel = source.text?.toString()?.trim()?.take(120).orEmpty()
-            val descriptionLabel = source.contentDescription?.toString()?.trim()?.take(120).orEmpty()
-            // Prefer semantic selectors so recorded scenarios survive small layout changes.
-            // Fall back to normalized coordinates when Unity exposes no accessible label.
-            val step = when {
-                textLabel.isNotEmpty() -> JSONObject()
-                    .put("type", "tap_text")
-                    .put("text", textLabel)
-                descriptionLabel.isNotEmpty() -> JSONObject()
-                    .put("type", "tap_description")
-                    .put("description", descriptionLabel)
-                else -> JSONObject()
-                    .put("type", "tap_relative")
-                    .put("x", x)
-                    .put("y", y)
+                steps.put(
+                    JSONObject()
+                        .put("type", "wait")
+                        .put("duration_ms", gap.coerceIn(700L, 10_000L)),
+                )
             }
             steps.put(step)
             prefs.edit()
                 .putString("recorded_game_steps", steps.toString())
                 .putLong("record_last_event_time", recordedAt)
-                .putLong("record_last_saved_at", current)
+                .putLong("record_last_saved_at", System.currentTimeMillis())
+                .putInt("record_diag_overlay_taps", prefs.getInt("record_diag_overlay_taps", 0) + 1)
                 .apply()
         }
     }
 
-    private val recordingLock = Any()
+    private fun updateRecordingBadge() {
+        val badge = recordingBadge ?: return
+        val prefs = getSharedPreferences("worker", MODE_PRIVATE)
+        val steps = runCatching {
+            JSONArray(prefs.getString("recorded_game_steps", "[]").orEmpty()).length()
+        }.getOrDefault(0)
+        badge.text = "REC · $steps"
+    }
 
-    override fun onInterrupt() = Unit
-
-    override fun onDestroy() {
-        executor.shutdownNow()
-        super.onDestroy()
+    private fun dispatchTap(rawX: Float, rawY: Float) {
+        if (android.os.Build.VERSION.SDK_INT < 24) return
+        // Small delay so the overlay finishes handling the original MotionEvent first.
+        mainHandler.postDelayed({
+            tapCoordinates(rawX, rawY)
+        }, 40L)
     }
 
     private fun settings(): Pair<String, String>? {
@@ -129,6 +306,12 @@ class WorkerAccessibilityService : AccessibilityService() {
     private fun executeJob(token: String, job: JSONObject) {
         val jobId = job.optString("id")
         try {
+            // Never run jobs while the recording overlay intercepts touches.
+            mainHandler.post { removeRecordingOverlay() }
+            getSharedPreferences("worker", MODE_PRIVATE).edit()
+                .putBoolean("record_game_actions", false)
+                .apply()
+
             capturedUiSnapshots.clear()
             val payload = job.optJSONObject("payload") ?: JSONObject()
             val steps = payload.optJSONArray("steps") ?: JSONArray()
@@ -146,11 +329,14 @@ class WorkerAccessibilityService : AccessibilityService() {
             api(token, JSONObject().put("action", "complete").put("job_id", jobId).put("result", result))
         } catch (error: Throwable) {
             runCatching {
-                api(token, JSONObject()
-                    .put("action", "fail")
-                    .put("job_id", jobId)
-                    .put("error", (error.message ?: "Executor error").take(500))
-                    .put("retryable", error !is IllegalArgumentException))
+                api(
+                    token,
+                    JSONObject()
+                        .put("action", "fail")
+                        .put("job_id", jobId)
+                        .put("error", (error.message ?: "Executor error").take(500))
+                        .put("retryable", error !is IllegalArgumentException),
+                )
             }
         } finally {
             activeJobId = null
@@ -169,21 +355,29 @@ class WorkerAccessibilityService : AccessibilityService() {
             }
             "tap_text" -> {
                 val needle = step.optString("text").trim()
-                if (needle.isEmpty() || !tapMatchingNode(needle, false)) throw IllegalStateException("Не найден кликабельный текст: $needle")
+                if (needle.isEmpty() || !tapMatchingNode(needle, false)) {
+                    throw IllegalStateException("Не найден кликабельный текст: $needle")
+                }
             }
             "tap_description" -> {
                 val needle = step.optString("description").trim()
-                if (needle.isEmpty() || !tapMatchingNode(needle, true)) throw IllegalStateException("Не найдено описание: $needle")
+                if (needle.isEmpty() || !tapMatchingNode(needle, true)) {
+                    throw IllegalStateException("Не найдено описание: $needle")
+                }
             }
             "tap_coordinates" -> {
                 val x = step.optInt("x", -1)
                 val y = step.optInt("y", -1)
-                if (x < 0 || y < 0 || !tapCoordinates(x.toFloat(), y.toFloat())) throw IllegalStateException("Не удалось нажать координаты")
+                if (x < 0 || y < 0 || !tapCoordinates(x.toFloat(), y.toFloat())) {
+                    throw IllegalStateException("Не удалось нажать координаты")
+                }
             }
             "tap_relative", "tap_point" -> {
                 val x = step.optInt("x", -1)
                 val y = step.optInt("y", -1)
-                if (x !in 0..10000 || y !in 0..10000) throw IllegalArgumentException("x и y должны быть долями экрана 0–10000")
+                if (x !in 0..10000 || y !in 0..10000) {
+                    throw IllegalArgumentException("x и y должны быть долями экрана 0–10000")
+                }
                 val metrics = resources.displayMetrics
                 val px = x * metrics.widthPixels / 10000f
                 val py = y * metrics.heightPixels / 10000f
@@ -195,8 +389,10 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val sy = step.optInt("start_y", -1)
                 val ex = step.optInt("end_x", -1)
                 val ey = step.optInt("end_y", -1)
-                val duration = step.optLong("duration_ms", 500L).coerceIn(100L, 10000L)
-                if (listOf(sx, sy, ex, ey).any { it !in 0..10000 }) throw IllegalArgumentException("Координаты swipe должны быть 0–10000")
+                val duration = step.optLong("duration_ms", 500L).coerceIn(100L, 10_000L)
+                if (listOf(sx, sy, ex, ey).any { it !in 0..10000 }) {
+                    throw IllegalArgumentException("Координаты swipe должны быть 0–10000")
+                }
                 val path = Path().apply {
                     moveTo(sx * metrics.widthPixels / 10000f, sy * metrics.heightPixels / 10000f)
                     lineTo(ex * metrics.widthPixels / 10000f, ey * metrics.heightPixels / 10000f)
@@ -204,15 +400,15 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val gesture = GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
                     .build()
-                if (!dispatchGestureAndWait(gesture, duration + 2_000L)) throw IllegalStateException("Не удалось выполнить swipe")
+                if (!dispatchGestureAndWait(gesture, duration + 2_000L)) {
+                    throw IllegalStateException("Не удалось выполнить swipe")
+                }
             }
             "launch_app" -> {
                 val requestedPackage = step.optString("package_name").trim()
                 if (requestedPackage.isEmpty()) throw IllegalArgumentException("package_name обязателен")
                 val prefs = getSharedPreferences("worker", MODE_PRIVATE)
                 val selectedGamePackage = prefs.getString("selected_game_package", "").orEmpty().trim()
-                // Existing server scenarios default to the original package; route those launches
-                // to the user-selected original/clone. Explicit unrelated app launches stay intact.
                 val packageName = if (
                     selectedGamePackage.isNotEmpty() &&
                     (requestedPackage == "com.global.ztmslg" || requestedPackage == selectedGamePackage)
@@ -229,10 +425,6 @@ class WorkerAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * Captures only visible, non-editable accessibility labels from the selected game window.
-     * Avoids screenshots, input fields, account credentials, and unrelated apps.
-     */
     private fun captureGameUiSnapshot(): JSONObject {
         val root = rootInActiveWindow ?: throw IllegalStateException("Нет активного окна для capture_ui")
         val activePackage = root.packageName?.toString().orEmpty()
@@ -306,24 +498,26 @@ class WorkerAccessibilityService : AccessibilityService() {
         return dispatchGestureAndWait(gesture, 3_000L)
     }
 
-    // dispatchGesture() only confirms that Android accepted the gesture, not that it finished.
-    // Wait for the callback so sequential scenario steps cannot race each other.
     private fun dispatchGestureAndWait(
         gesture: GestureDescription,
-        timeoutMs: Long
+        timeoutMs: Long,
     ): Boolean {
         val latch = CountDownLatch(1)
         val completed = AtomicBoolean(false)
-        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) {
-                completed.set(true)
-                latch.countDown()
-            }
+        val accepted = dispatchGesture(
+            gesture,
+            object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    completed.set(true)
+                    latch.countDown()
+                }
 
-            override fun onCancelled(gestureDescription: GestureDescription?) {
-                latch.countDown()
-            }
-        }, mainHandler)
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    latch.countDown()
+                }
+            },
+            mainHandler,
+        )
         if (!accepted) return false
         return try {
             latch.await(timeoutMs.coerceIn(500L, 15_000L), TimeUnit.MILLISECONDS) && completed.get()

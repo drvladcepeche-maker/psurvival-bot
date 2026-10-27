@@ -45,7 +45,7 @@ class MainActivity : Activity() {
             setPadding(32, 28, 32, 28)
         }
         root.addView(TextView(this).apply {
-            text = "P&S Worker"
+            text = "P&S Worker 0.2.0"
             textSize = 24f
         })
         root.addView(TextView(this).apply {
@@ -145,7 +145,7 @@ class MainActivity : Activity() {
             textSize = 20f
         }, matchWidth())
         root.addView(TextView(this).apply {
-            text = "Запись сохраняет нажатия, которые Android передаёт службе доступности, в координаты относительно экрана. Запускай запись, перейди в игру и выполняй нужные действия вручную, затем останови запись и скопируй JSON. Пароли и поля ввода не записываются. Если игра рисует интерфейс Unity без доступных узлов, Android может не сообщать о нажатиях — тогда сценарий останется пустым."
+            text = "В версии 0.2.0 запись использует оверлей службы доступности: короткие нажатия по экрану сохраняются как tap_relative (0–10000) и одновременно отправляются в игру. Пока идёт запись, сверху виден индикатор REC. Пароли и поля ввода не записываются. После остановки скопируй JSON или команду для Telegram."
             textSize = 14f
         }, matchWidth())
         root.addView(Button(this).apply {
@@ -154,9 +154,15 @@ class MainActivity : Activity() {
                 prefs.edit()
                     .putBoolean("record_game_actions", true)
                     .putString("recorded_game_steps", "[]")
+                    .putLong("record_diag_total", 0L)
+                    .putInt("record_diag_last_type", 0)
+                    .putInt("record_diag_overlay_taps", 0)
+                    .putString("record_diag_last_package", "")
+                    .putLong("record_diag_last_at", 0L)
+                    .putLong("recording_started_at", System.currentTimeMillis())
                     .remove("record_last_event_time")
                     .apply()
-                status.text = "Запись включена. Перейди в выбранную игру и выполни нужные действия."
+                status.text = "Запись включена. Перейди в игру: сверху появится REC. Делай короткие нажатия — они попадут в сценарий."
                 refreshRecordedSteps()
             }
         }, matchWidth())
@@ -166,6 +172,34 @@ class MainActivity : Activity() {
                 prefs.edit().putBoolean("record_game_actions", false).remove("record_last_event_time").apply()
                 status.text = "Запись остановлена."
                 refreshRecordedSteps()
+            }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Диагностика записи"
+            setOnClickListener {
+                val connectedAt = prefs.getLong("accessibility_service_connected_at", 0L)
+                val startedAt = prefs.getLong("recording_started_at", 0L)
+                val eventTotal = prefs.getLong("record_diag_total", 0L)
+                val overlayTaps = prefs.getInt("record_diag_overlay_taps", 0)
+                val lastType = prefs.getInt("record_diag_last_type", 0)
+                val lastPackage = prefs.getString("record_diag_last_package", "").orEmpty()
+                val lastAt = prefs.getLong("record_diag_last_at", 0L)
+                val eventName = when (lastType) {
+                    android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WINDOW_STATE_CHANGED"
+                    android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "WINDOW_CONTENT_CHANGED"
+                    android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED -> "VIEW_CLICKED"
+                    else -> if (lastType == 0) "нет" else "тип=$lastType"
+                }
+                status.text = "Служба доступности подключалась: " +
+                    (if (connectedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(connectedAt)) else "нет отметки") +
+                    "\nНачало записи: " +
+                    (if (startedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(startedAt)) else "не запускалась") +
+                    "\nСобытий accessibility: $eventTotal" +
+                    "\nТапов через оверлей: $overlayTaps" +
+                    "\nПоследнее событие: $eventName" +
+                    "\nПакет: " + (lastPackage.ifBlank { "нет" }) +
+                    "\nВремя последнего события: " +
+                    (if (lastAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(lastAt)) else "нет")
             }
         }, matchWidth())
         root.addView(Button(this).apply {
@@ -207,7 +241,7 @@ class MainActivity : Activity() {
             val raw = prefs.getString("recorded_game_steps", "[]").orEmpty()
             val steps = runCatching { org.json.JSONArray(raw) }.getOrNull()
             recordingOutput.text = if (steps == null || steps.length() == 0) {
-                "Записанных шагов пока нет. Учти: не все игровые интерфейсы передают нажатия в AccessibilityService."
+                "Записанных шагов пока нет. После старта записи сверху должен появиться индикатор REC."
             } else {
                 "Записано шагов: ${steps.length()}\n" + runCatching {
                     org.json.JSONArray(raw).let { arr ->
@@ -218,7 +252,6 @@ class MainActivity : Activity() {
                 }.getOrDefault(raw)
             }
         }
-        // Keep the local function available to the buttons created above through a property callback.
         recordedStepsRefresh = { updateRecordingOutput() }
         updateRecordingOutput()
 
@@ -308,6 +341,6 @@ class MainActivity : Activity() {
 
     private fun matchWidth() = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT
+        ViewGroup.LayoutParams.WRAP_CONTENT,
     )
 }
