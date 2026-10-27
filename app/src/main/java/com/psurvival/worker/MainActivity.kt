@@ -45,7 +45,7 @@ class MainActivity : Activity() {
             setPadding(32, 28, 32, 28)
         }
         root.addView(TextView(this).apply {
-            text = "P&S Worker 0.2.0"
+            text = "P&S Worker 0.2.1"
             textSize = 24f
         })
         root.addView(TextView(this).apply {
@@ -64,18 +64,17 @@ class MainActivity : Activity() {
             setText(prefs.getString("token", ""))
         }
         root.addView(token, matchWidth())
-        val save = Button(this).apply {
+        root.addView(Button(this).apply {
             text = "Сохранить настройки"
             setOnClickListener {
                 prefs.edit()
                     .putString("worker_id", workerId.text.toString().trim())
                     .putString("token", token.text.toString().trim())
                     .putString("selected_game_package", selectedGamePackage())
-                    .apply()
+                    .commit()
                 status.text = "Настройки сохранены. Теперь включи службу доступности ниже."
             }
-        }
-        root.addView(save, matchWidth())
+        }, matchWidth())
 
         root.addView(TextView(this).apply {
             text = "Экземпляр игры"
@@ -102,7 +101,7 @@ class MainActivity : Activity() {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 gameTargets.getOrNull(position)?.let { target ->
-                    prefs.edit().putString("selected_game_package", target.packageName).apply()
+                    prefs.edit().putString("selected_game_package", target.packageName).commit()
                     status.text = "Выбран экземпляр игры: ${target.label} (${target.packageName})"
                 }
             }
@@ -118,7 +117,7 @@ class MainActivity : Activity() {
                     .takeIf { it >= 0 }
                     ?: gameTargets.indexOfFirst { it.packageName == defaultGamePackage }.coerceAtLeast(0)
                 gameTargetSpinner.setSelection(index)
-                status.text = "Найдено подходящих вариантов: ${gameTargets.size}. Если клон не появился, Android может изолировать его в отдельном профиле."
+                status.text = "Найдено подходящих вариантов: ${gameTargets.size}"
             }
         }, matchWidth())
         root.addView(Button(this).apply {
@@ -126,17 +125,10 @@ class MainActivity : Activity() {
             setOnClickListener { status.text = checkGameInstalled() }
         }, matchWidth())
         root.addView(Button(this).apply {
-            text = "Открыть выбранную игру — вход через Google"
+            text = "Открыть выбранную игру"
             setOnClickListener {
                 val result = launchGame()
-                status.text = result ?: "Игра открыта. На её экране выбери штатный вход через Google и подтверди нужный аккаунт."
-            }
-        }, matchWidth())
-        root.addView(Button(this).apply {
-            text = "Открыть выбранную игру — вход по email"
-            setOnClickListener {
-                val result = launchGame()
-                status.text = result ?: "Игра открыта. На её экране выбери вход по email и введи данные непосредственно в игре."
+                status.text = result ?: "Игра открыта."
             }
         }, matchWidth())
 
@@ -145,7 +137,7 @@ class MainActivity : Activity() {
             textSize = 20f
         }, matchWidth())
         root.addView(TextView(this).apply {
-            text = "В версии 0.2.0 запись использует оверлей службы доступности: короткие нажатия по экрану сохраняются как tap_relative (0–10000) и одновременно отправляются в игру. Пока идёт запись, сверху виден индикатор REC. Пароли и поля ввода не записываются. После остановки скопируй JSON или команду для Telegram."
+            text = "Версия 0.2.1: при записи должен появиться голубоватый оверлей и красный REC сверху. Если REC нет — служба доступности не перезапущена после установки APK."
             textSize = 14f
         }, matchWidth())
         root.addView(Button(this).apply {
@@ -158,18 +150,22 @@ class MainActivity : Activity() {
                     .putInt("record_diag_last_type", 0)
                     .putInt("record_diag_overlay_taps", 0)
                     .putString("record_diag_last_package", "")
+                    .putString("record_diag_overlay_status", "waiting_for_service")
                     .putLong("record_diag_last_at", 0L)
                     .putLong("recording_started_at", System.currentTimeMillis())
                     .remove("record_last_event_time")
-                    .apply()
-                status.text = "Запись включена. Перейди в игру: сверху появится REC. Делай короткие нажатия — они попадут в сценарий."
+                    .commit()
+                status.text = "Запись включена. В течение 1–2 сек должен появиться REC. Если нет — выключи/включи службу доступности и Force Stop приложения."
                 refreshRecordedSteps()
             }
         }, matchWidth())
         root.addView(Button(this).apply {
             text = "Остановить запись"
             setOnClickListener {
-                prefs.edit().putBoolean("record_game_actions", false).remove("record_last_event_time").apply()
+                prefs.edit()
+                    .putBoolean("record_game_actions", false)
+                    .remove("record_last_event_time")
+                    .commit()
                 status.text = "Запись остановлена."
                 refreshRecordedSteps()
             }
@@ -181,6 +177,8 @@ class MainActivity : Activity() {
                 val startedAt = prefs.getLong("recording_started_at", 0L)
                 val eventTotal = prefs.getLong("record_diag_total", 0L)
                 val overlayTaps = prefs.getInt("record_diag_overlay_taps", 0)
+                val overlayStatus = prefs.getString("record_diag_overlay_status", "нет").orEmpty()
+                val recordingOn = prefs.getBoolean("record_game_actions", false)
                 val lastType = prefs.getInt("record_diag_last_type", 0)
                 val lastPackage = prefs.getString("record_diag_last_package", "").orEmpty()
                 val lastAt = prefs.getLong("record_diag_last_at", 0L)
@@ -190,10 +188,13 @@ class MainActivity : Activity() {
                     android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED -> "VIEW_CLICKED"
                     else -> if (lastType == 0) "нет" else "тип=$lastType"
                 }
-                status.text = "Служба доступности подключалась: " +
-                    (if (connectedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(connectedAt)) else "нет отметки") +
+                status.text = "Версия UI: 0.2.1\n" +
+                    "Запись сейчас: " + (if (recordingOn) "ВКЛ" else "ВЫКЛ") +
+                    "\nСтатус оверлея: $overlayStatus" +
+                    "\nСлужба подключалась: " +
+                    (if (connectedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(connectedAt)) else "нет") +
                     "\nНачало записи: " +
-                    (if (startedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(startedAt)) else "не запускалась") +
+                    (if (startedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(startedAt)) else "нет") +
                     "\nСобытий accessibility: $eventTotal" +
                     "\nТапов через оверлей: $overlayTaps" +
                     "\nПоследнее событие: $eventName" +
@@ -212,7 +213,7 @@ class MainActivity : Activity() {
                 val json = prefs.getString("recorded_game_steps", "[]").orEmpty()
                 val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("P&S Worker recorded scenario", json))
-                status.text = "JSON сценария скопирован. Его можно передать боту как daily_steps после проверки."
+                status.text = "JSON сценария скопирован."
                 refreshRecordedSteps()
             }
         }, matchWidth())
@@ -227,7 +228,7 @@ class MainActivity : Activity() {
                     val command = "/set daily_steps $json"
                     val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                     clipboard.setPrimaryClip(ClipData.newPlainText("P&S Worker Telegram command", command))
-                    status.text = "Команда /set daily_steps скопирована. Проверь сценарий перед отправкой боту."
+                    status.text = "Команда /set daily_steps скопирована."
                 }
             }
         }, matchWidth())
@@ -241,7 +242,7 @@ class MainActivity : Activity() {
             val raw = prefs.getString("recorded_game_steps", "[]").orEmpty()
             val steps = runCatching { org.json.JSONArray(raw) }.getOrNull()
             recordingOutput.text = if (steps == null || steps.length() == 0) {
-                "Записанных шагов пока нет. После старта записи сверху должен появиться индикатор REC."
+                "Записанных шагов пока нет. Нужен красный REC сверху и лёгкий голубой оверлей."
             } else {
                 "Записано шагов: ${steps.length()}\n" + runCatching {
                     org.json.JSONArray(raw).let { arr ->
@@ -278,7 +279,7 @@ class MainActivity : Activity() {
             }
         }, matchWidth())
         status = TextView(this).apply {
-            text = "Исполнитель запускается только после включения службы доступности."
+            text = "После установки нового APK обязательно: выключи службу доступности → Force Stop приложения → включи службу снова."
             textSize = 14f
         }
         root.addView(status, matchWidth())
@@ -320,7 +321,7 @@ class MainActivity : Activity() {
             packageManager.getPackageInfo(packageName, 0)
             "Выбранный экземпляр обнаружен: $packageName"
         } catch (_: PackageManager.NameNotFoundException) {
-            "Выбранный экземпляр не обнаружен: $packageName. Обнови список и проверь, виден ли клон Android."
+            "Выбранный экземпляр не обнаружен: $packageName"
         } catch (error: Exception) {
             "Не удалось проверить игру: ${error.message}"
         }
