@@ -37,6 +37,11 @@ class MainActivity : Activity() {
 
     private fun refreshRecordedSteps() { recordedStepsRefresh?.invoke() }
 
+    private fun notifyServiceSyncRecording() {
+        // Explicit wake-up so overlay does not depend only on the 1s poll loop.
+        sendBroadcast(Intent(WorkerAccessibilityService.ACTION_SYNC_RECORDING).setPackage(packageName))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("worker", MODE_PRIVATE)
@@ -45,7 +50,7 @@ class MainActivity : Activity() {
             setPadding(32, 28, 32, 28)
         }
         root.addView(TextView(this).apply {
-            text = "P&S Worker 0.2.1"
+            text = "P&S Worker 0.2.2"
             textSize = 24f
         })
         root.addView(TextView(this).apply {
@@ -137,7 +142,7 @@ class MainActivity : Activity() {
             textSize = 20f
         }, matchWidth())
         root.addView(TextView(this).apply {
-            text = "Версия 0.2.1: при записи должен появиться голубоватый оверлей и красный REC сверху. Если REC нет — служба доступности не перезапущена после установки APK."
+            text = "Версия 0.2.2: старт записи сразу будит службу доступности. Должны появиться голубой оверлей и красный REC. Если статус остаётся waiting_for_service — служба не жива: выключи её, Force Stop, включи снова."
             textSize = 14f
         }, matchWidth())
         root.addView(Button(this).apply {
@@ -155,7 +160,8 @@ class MainActivity : Activity() {
                     .putLong("recording_started_at", System.currentTimeMillis())
                     .remove("record_last_event_time")
                     .commit()
-                status.text = "Запись включена. В течение 1–2 сек должен появиться REC. Если нет — выключи/включи службу доступности и Force Stop приложения."
+                notifyServiceSyncRecording()
+                status.text = "Запись включена, сигнал службе отправлен. Жди REC (до 2 сек)."
                 refreshRecordedSteps()
             }
         }, matchWidth())
@@ -166,6 +172,7 @@ class MainActivity : Activity() {
                     .putBoolean("record_game_actions", false)
                     .remove("record_last_event_time")
                     .commit()
+                notifyServiceSyncRecording()
                 status.text = "Запись остановлена."
                 refreshRecordedSteps()
             }
@@ -188,7 +195,7 @@ class MainActivity : Activity() {
                     android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED -> "VIEW_CLICKED"
                     else -> if (lastType == 0) "нет" else "тип=$lastType"
                 }
-                status.text = "Версия UI: 0.2.1\n" +
+                status.text = "Версия UI: 0.2.2\n" +
                     "Запись сейчас: " + (if (recordingOn) "ВКЛ" else "ВЫКЛ") +
                     "\nСтатус оверлея: $overlayStatus" +
                     "\nСлужба подключалась: " +
@@ -279,7 +286,7 @@ class MainActivity : Activity() {
             }
         }, matchWidth())
         status = TextView(this).apply {
-            text = "После установки нового APK обязательно: выключи службу доступности → Force Stop приложения → включи службу снова."
+            text = "После установки нового APK: выключи службу доступности → Force Stop → включи службу снова."
             textSize = 14f
         }
         root.addView(status, matchWidth())
