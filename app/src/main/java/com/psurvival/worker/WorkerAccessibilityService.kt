@@ -11,8 +11,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class WorkerAccessibilityService : AccessibilityService() {
     private val executor = Executors.newScheduledThreadPool(2)
@@ -135,7 +137,7 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val gesture = GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
                     .build()
-                if (!dispatchGesture(gesture, null, null)) throw IllegalStateException("Не удалось выполнить swipe")
+                if (!dispatchGestureAndWait(gesture, duration + 2_000L)) throw IllegalStateException("Не удалось выполнить swipe")
             }
             "launch_app" -> {
                 val requestedPackage = step.optString("package_name").trim()
@@ -188,7 +190,34 @@ class WorkerAccessibilityService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 80))
             .build()
-        return dispatchGesture(gesture, null, null)
+        return dispatchGestureAndWait(gesture, 3_000L)
+    }
+
+    // dispatchGesture() only confirms that Android accepted the gesture, not that it finished.
+    // Wait for the callback so sequential scenario steps cannot race each other.
+    private fun dispatchGestureAndWait(
+        gesture: GestureDescription,
+        timeoutMs: Long
+    ): Boolean {
+        val latch = CountDownLatch(1)
+        val completed = AtomicBoolean(false)
+        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                completed.set(true)
+                latch.countDown()
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                latch.countDown()
+            }
+        }, mainHandler)
+        if (!accepted) return false
+        return try {
+            latch.await(timeoutMs.coerceIn(500L, 15_000L), TimeUnit.MILLISECONDS) && completed.get()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
     }
 
     private fun api(token: String, body: JSONObject): JSONObject {
