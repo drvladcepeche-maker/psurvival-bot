@@ -13,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Spinner
+import android.widget.ScrollView
 import android.widget.TextView
 import java.net.HttpURLConnection
 import java.net.URL
@@ -161,7 +162,11 @@ class MainActivity : Activity() {
             textSize = 14f
         }
         root.addView(status, matchWidth())
-        setContentView(root)
+        val scrollView = ScrollView(this).apply {
+            isFillViewport = true
+            addView(root)
+        }
+        setContentView(scrollView)
     }
 
     private fun discoverGameTargets(): List<GameTarget> {
