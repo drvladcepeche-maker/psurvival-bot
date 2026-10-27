@@ -1,6 +1,8 @@
 package com.psurvival.worker
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -31,6 +33,9 @@ class MainActivity : Activity() {
     private var gameTargets: List<GameTarget> = emptyList()
 
     private val defaultGamePackage = "com.global.ztmslg"
+    private var recordedStepsRefresh: (() -> Unit)? = null
+
+    private fun refreshRecordedSteps() { recordedStepsRefresh?.invoke() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -134,6 +139,73 @@ class MainActivity : Activity() {
                 status.text = result ?: "Игра открыта. На её экране выбери вход по email и введи данные непосредственно в игре."
             }
         }, matchWidth())
+
+        root.addView(TextView(this).apply {
+            text = "Запись действий в сценарий"
+            textSize = 20f
+        }, matchWidth())
+        root.addView(TextView(this).apply {
+            text = "Запись сохраняет нажатия, которые Android передаёт службе доступности, в координаты относительно экрана. Запускай запись, перейди в игру и выполняй нужные действия вручную, затем останови запись и скопируй JSON. Пароли и поля ввода не записываются. Если игра рисует интерфейс Unity без доступных узлов, Android может не сообщать о нажатиях — тогда сценарий останется пустым."
+            textSize = 14f
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Начать новую запись"
+            setOnClickListener {
+                prefs.edit()
+                    .putBoolean("record_game_actions", true)
+                    .putString("recorded_game_steps", "[]")
+                    .remove("record_last_event_time")
+                    .apply()
+                status.text = "Запись включена. Перейди в выбранную игру и выполни нужные действия."
+                refreshRecordedSteps()
+            }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Остановить запись"
+            setOnClickListener {
+                prefs.edit().putBoolean("record_game_actions", false).remove("record_last_event_time").apply()
+                status.text = "Запись остановлена."
+                refreshRecordedSteps()
+            }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Обновить JSON сценария"
+            setOnClickListener { refreshRecordedSteps() }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Скопировать JSON сценария"
+            setOnClickListener {
+                val json = prefs.getString("recorded_game_steps", "[]").orEmpty()
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("P&S Worker recorded scenario", json))
+                status.text = "JSON сценария скопирован. Его можно передать боту как daily_steps после проверки."
+                refreshRecordedSteps()
+            }
+        }, matchWidth())
+        val recordingOutput = TextView(this).apply {
+            textSize = 12f
+            setTextIsSelectable(true)
+            text = "Записанных шагов пока нет."
+        }
+        root.addView(recordingOutput, matchWidth())
+        fun updateRecordingOutput() {
+            val raw = prefs.getString("recorded_game_steps", "[]").orEmpty()
+            val steps = runCatching { org.json.JSONArray(raw) }.getOrNull()
+            recordingOutput.text = if (steps == null || steps.length() == 0) {
+                "Записанных шагов пока нет. Учти: не все игровые интерфейсы передают нажатия в AccessibilityService."
+            } else {
+                "Записано шагов: ${steps.length()}\n" + runCatching {
+                    org.json.JSONArray(raw).let { arr ->
+                        val pretty = org.json.JSONArray()
+                        for (i in 0 until arr.length()) pretty.put(arr.getJSONObject(i))
+                        pretty.toString(2)
+                    }
+                }.getOrDefault(raw)
+            }
+        }
+        // Keep the local function available to the buttons created above through a property callback.
+        recordedStepsRefresh = { updateRecordingOutput() }
+        updateRecordingOutput()
 
         root.addView(Button(this).apply {
             text = "Открыть настройки службы доступности"
