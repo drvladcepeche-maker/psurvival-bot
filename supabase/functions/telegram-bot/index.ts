@@ -430,7 +430,7 @@ Deno.serve(async (req: Request) => {
     }
     case "point": {
       if (telegramUserId === undefined || !serviceKey()) { reply = "Настройки недоступны."; break; }
-      const args = text.replace(/^\\/point(?:@[a-z0-9_]+)?\\s*/i, "").trim().split(/\\s+/);
+      const args = text.replace(/^\/point(?:@[a-z0-9_]+)?\s*/i, "").trim().split(/\s+/);
       const [name, rawX, rawY] = args;
       const x = Number(rawX), y = Number(rawY);
       if (!name || !/^[a-z0-9_]{1,40}$/.test(name) || !Number.isInteger(x) || !Number.isInteger(y) || x < 0 || x > 10000 || y < 0 || y > 10000 || args.length !== 3) {
@@ -448,7 +448,7 @@ Deno.serve(async (req: Request) => {
       break;
     case "scenario": {
       if (telegramUserId === undefined || !serviceKey()) { reply = "Очередь заданий недоступна."; break; }
-      const name = text.replace(/^\\/scenario(?:@[a-z0-9_]+)?\\s*/i, "").trim().toLowerCase();
+      const name = text.replace(/^\/scenario(?:@[a-z0-9_]+)?\s*/i, "").trim().toLowerCase();
       const scenario = SCENARIOS[name];
       if (!scenario) { reply = "Неизвестный сценарий. Используй /scenarios."; break; }
       try {
