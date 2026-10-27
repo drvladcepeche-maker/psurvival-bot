@@ -2,10 +2,14 @@ package com.psurvival.worker
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -24,6 +28,10 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class WorkerAccessibilityService : AccessibilityService() {
+    companion object {
+        const val ACTION_SYNC_RECORDING = "com.psurvival.worker.SYNC_RECORDING"
+    }
+
     private val executor = Executors.newScheduledThreadPool(2)
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var activeJobId: String? = null
@@ -37,6 +45,15 @@ class WorkerAccessibilityService : AccessibilityService() {
     private var overlayTouchDownX = 0f
     private var overlayTouchDownY = 0f
     private var overlayTouchDownAt = 0L
+    private var receiverRegistered = false
+
+    private val recordingReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_SYNC_RECORDING) return
+            setOverlayStatus("broadcast_received")
+            mainHandler.post { syncRecordingOverlayNow() }
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -44,8 +61,29 @@ class WorkerAccessibilityService : AccessibilityService() {
             .putLong("accessibility_service_connected_at", System.currentTimeMillis())
             .putString("record_diag_overlay_status", "service_connected")
             .commit()
+        registerRecordingReceiver()
+        // If user already pressed Start recording before service was ready, show overlay now.
+        mainHandler.post { syncRecordingOverlayNow() }
         executor.scheduleWithFixedDelay({ pollOrHeartbeat() }, 2, 10, TimeUnit.SECONDS)
-        executor.scheduleWithFixedDelay({ syncRecordingOverlay() }, 0, 1, TimeUnit.SECONDS)
+        executor.scheduleWithFixedDelay({
+            mainHandler.post { syncRecordingOverlayNow() }
+        }, 1, 1, TimeUnit.SECONDS)
+    }
+
+    private fun registerRecordingReceiver() {
+        if (receiverRegistered) return
+        val filter = IntentFilter(ACTION_SYNC_RECORDING)
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(recordingReceiver, filter, RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                registerReceiver(recordingReceiver, filter)
+            }
+            receiverRegistered = true
+        } catch (error: Throwable) {
+            setOverlayStatus("receiver_error: ${(error.message ?: error.javaClass.simpleName).take(80)}")
+        }
     }
 
     override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
@@ -91,18 +129,20 @@ class WorkerAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        if (receiverRegistered) {
+            runCatching { unregisterReceiver(recordingReceiver) }
+            receiverRegistered = false
+        }
         mainHandler.post { removeRecordingOverlay("service_destroyed") }
         executor.shutdownNow()
         super.onDestroy()
     }
 
-    private fun syncRecordingOverlay() {
+    private fun syncRecordingOverlayNow() {
         val prefs = getSharedPreferences("worker", MODE_PRIVATE)
         val enabled = prefs.getBoolean("record_game_actions", false)
-        mainHandler.post {
-            if (enabled) ensureRecordingOverlay() else removeRecordingOverlay("recording_off")
-            updateRecordingBadge()
-        }
+        if (enabled) ensureRecordingOverlay() else removeRecordingOverlay("recording_off")
+        updateRecordingBadge()
     }
 
     private fun ensureRecordingOverlay() {
@@ -112,7 +152,6 @@ class WorkerAccessibilityService : AccessibilityService() {
         }
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val root = FrameLayout(this).apply {
-            // Visible enough to confirm overlay is present, still see the game under it.
             setBackgroundColor(0x3300AAFF)
             isClickable = true
             isFocusable = false
@@ -173,7 +212,7 @@ class WorkerAccessibilityService : AccessibilityService() {
         getSharedPreferences("worker", MODE_PRIVATE).edit()
             .putString("record_diag_overlay_status", status)
             .putLong("record_diag_overlay_status_at", System.currentTimeMillis())
-            .apply()
+            .commit()
     }
 
     private fun handleOverlayTouch(event: MotionEvent): Boolean {
@@ -265,7 +304,7 @@ class WorkerAccessibilityService : AccessibilityService() {
     }
 
     private fun dispatchTap(rawX: Float, rawY: Float) {
-        if (android.os.Build.VERSION.SDK_INT < 24) return
+        if (Build.VERSION.SDK_INT < 24) return
         mainHandler.postDelayed({ tapCoordinates(rawX, rawY) }, 40L)
     }
 
@@ -482,7 +521,7 @@ class WorkerAccessibilityService : AccessibilityService() {
     }
 
     private fun tapCoordinates(x: Float, y: Float): Boolean {
-        if (android.os.Build.VERSION.SDK_INT < 24) return false
+        if (Build.VERSION.SDK_INT < 24) return false
         val path = Path().apply { moveTo(x, y) }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 80))
