@@ -1,9 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Android 11+ package visibility: the worker must be able to discover the game launcher. -->
+    <!-- Let the worker discover installed launcher apps, then filter for Puzzles & Survival. -->
     <queries>
-        <package android:name="com.global.ztmslg" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application
