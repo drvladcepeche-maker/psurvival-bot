@@ -28,7 +28,58 @@ class WorkerAccessibilityService : AccessibilityService() {
         executor.scheduleWithFixedDelay({ pollOrHeartbeat() }, 2, 10, TimeUnit.SECONDS)
     }
 
-    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
+        if (event == null) return
+        val prefs = getSharedPreferences("worker", MODE_PRIVATE)
+        if (!prefs.getBoolean("record_game_actions", false)) return
+        val selectedPackage = prefs.getString("selected_game_package", "com.global.ztmslg")
+            .orEmpty().ifBlank { "com.global.ztmslg" }
+        val activePackage = event.packageName?.toString().orEmpty()
+        if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") return
+
+        // Record only explicit accessibility click events. No screenshots, text fields,
+        // passwords, chat contents, or events from other apps are captured.
+        if (event.eventType != android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) return
+        val source = event.source ?: return
+        if (source.isEditable || source.className?.toString().orEmpty().contains("EditText", true)) return
+        val bounds = android.graphics.Rect()
+        source.getBoundsInScreen(bounds)
+        if (bounds.isEmpty || bounds.centerX() < 0 || bounds.centerY() < 0) return
+
+        val metrics = resources.displayMetrics
+        if (metrics.widthPixels <= 0 || metrics.heightPixels <= 0) return
+        val x = (bounds.centerX() * 10000 / metrics.widthPixels).coerceIn(0, 10000)
+        val y = (bounds.centerY() * 10000 / metrics.heightPixels).coerceIn(0, 10000)
+        synchronized(recordingLock) {
+            val current = System.currentTimeMillis()
+            val recordedAt = event.eventTime
+            val steps = runCatching {
+                JSONArray(prefs.getString("recorded_game_steps", "[]").orEmpty())
+            }.getOrDefault(JSONArray())
+            if (steps.length() >= 500) return
+            val previous = prefs.getLong("record_last_event_time", 0L)
+            val gap = if (previous > 0L && recordedAt > previous) recordedAt - previous else 0L
+            if (gap >= 700L) {
+                steps.put(JSONObject().put("type", "wait").put("duration_ms", gap.coerceIn(700L, 10_000L)))
+            }
+            val label = (source.text?.toString() ?: source.contentDescription?.toString())
+                ?.trim()?.take(80).orEmpty()
+            val step = JSONObject()
+                .put("type", "tap_relative")
+                .put("x", x)
+                .put("y", y)
+            if (label.isNotEmpty()) step.put("label", label)
+            steps.put(step)
+            prefs.edit()
+                .putString("recorded_game_steps", steps.toString())
+                .putLong("record_last_event_time", recordedAt)
+                .putLong("record_last_saved_at", current)
+                .apply()
+        }
+    }
+
+    private val recordingLock = Any()
+
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
