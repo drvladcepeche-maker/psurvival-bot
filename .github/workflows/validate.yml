@@ -2,7 +2,7 @@ name: Validate Telegram bot
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/game-automation-and-bridge]
   pull_request:
     branches: [main]
 
@@ -24,7 +24,11 @@ jobs:
           deno check supabase/functions/telegram-bot/index.ts
           deno check supabase/functions/psurvival-worker/index.ts
       - name: Test webhook secret validation
-        run: deno test supabase/functions/telegram-bot/tests/webhook_secret_test.ts
+        run: deno test supabase/functions/telegram-bot/tests/
+      - name: Syntax-check vendored Termux bridge
+        run: |
+          node --check termux-bridge/bridge.mjs
+          node --check termux-bridge/apk-inspect.mjs
       - name: Verify worker endpoint rejects unauthenticated calls
         run: |
           node --input-type=module <<'NODE'

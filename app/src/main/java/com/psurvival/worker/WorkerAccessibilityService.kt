@@ -111,6 +111,32 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val y = step.optInt("y", -1)
                 if (x < 0 || y < 0 || !tapCoordinates(x.toFloat(), y.toFloat())) throw IllegalStateException("Не удалось нажать координаты")
             }
+            "tap_relative", "tap_point" -> {
+                val x = step.optInt("x", -1)
+                val y = step.optInt("y", -1)
+                if (x !in 0..10000 || y !in 0..10000) throw IllegalArgumentException("x и y должны быть долями экрана 0–10000")
+                val metrics = resources.displayMetrics
+                val px = x * metrics.widthPixels / 10000f
+                val py = y * metrics.heightPixels / 10000f
+                if (!tapCoordinates(px, py)) throw IllegalStateException("Не удалось нажать относительную точку")
+            }
+            "swipe" -> {
+                val metrics = resources.displayMetrics
+                val sx = step.optInt("start_x", -1)
+                val sy = step.optInt("start_y", -1)
+                val ex = step.optInt("end_x", -1)
+                val ey = step.optInt("end_y", -1)
+                val duration = step.optLong("duration_ms", 500L).coerceIn(100L, 10000L)
+                if (listOf(sx, sy, ex, ey).any { it !in 0..10000 }) throw IllegalArgumentException("Координаты swipe должны быть 0–10000")
+                val path = Path().apply {
+                    moveTo(sx * metrics.widthPixels / 10000f, sy * metrics.heightPixels / 10000f)
+                    lineTo(ex * metrics.widthPixels / 10000f, ey * metrics.heightPixels / 10000f)
+                }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
+                    .build()
+                if (!dispatchGesture(gesture, null, null)) throw IllegalStateException("Не удалось выполнить swipe")
+            }
             "launch_app" -> {
                 val packageName = step.optString("package_name").trim()
                 if (packageName.isEmpty()) throw IllegalArgumentException("package_name обязателен")
