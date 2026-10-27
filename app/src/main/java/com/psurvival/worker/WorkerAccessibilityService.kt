@@ -6,6 +6,8 @@ import android.content.Intent
 import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
 import org.json.JSONObject
@@ -40,6 +42,13 @@ class WorkerAccessibilityService : AccessibilityService() {
         return if (id.isNotEmpty() && token.startsWith("psw_")) id to token else null
     }
 
+    private fun screenSize(): Pair<Int, Int> {
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
+        return metrics.widthPixels to metrics.heightPixels
+    }
+
     @Synchronized
     private fun pollOrHeartbeat() {
         val config = settings() ?: return
@@ -72,7 +81,7 @@ class WorkerAccessibilityService : AccessibilityService() {
             val result = JSONObject().put("executed_steps", steps.length()).put("task_type", job.optString("task_type"))
             for (i in 0 until steps.length()) {
                 val step = steps.optJSONObject(i) ?: throw IllegalArgumentException("Некорректный шаг #$i")
-                executeStep(step)
+                executeStep(step, payload)
             }
             api(token, JSONObject().put("action", "complete").put("job_id", jobId).put("result", result))
         } catch (error: Throwable) {
@@ -89,10 +98,10 @@ class WorkerAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun executeStep(step: JSONObject) {
+    private fun executeStep(step: JSONObject, payload: JSONObject) {
         when (step.optString("type")) {
             "wait" -> {
-                val millis = step.optLong("duration_ms", 1000L).coerceIn(250L, 10_000L)
+                val millis = step.optLong("duration_ms", 1000L).coerceIn(250L, 30_000L)
                 Thread.sleep(millis)
             }
             "back" -> {
@@ -111,16 +120,59 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val y = step.optInt("y", -1)
                 if (x < 0 || y < 0 || !tapCoordinates(x.toFloat(), y.toFloat())) throw IllegalStateException("Не удалось нажать координаты")
             }
+            "tap_relative" -> {
+                val fx = step.optDouble("x", -1.0)
+                val fy = step.optDouble("y", -1.0)
+                if (fx < 0.0 || fx > 1.0 || fy < 0.0 || fy > 1.0) throw IllegalArgumentException("tap_relative: x,y в диапазоне 0.0–1.0")
+                val (w, h) = screenSize()
+                if (!tapCoordinates((fx * w).toFloat(), (fy * h).toFloat())) throw IllegalStateException("Не удалось нажать relative-координаты")
+            }
+            "swipe" -> {
+                val relative = step.optBoolean("relative", false)
+                val duration = step.optLong("duration_ms", 300L).coerceIn(50L, 3000L)
+                val (w, h) = screenSize()
+                val x1: Float
+                val y1: Float
+                val x2: Float
+                val y2: Float
+                if (relative) {
+                    x1 = (step.optDouble("x1") * w).toFloat()
+                    y1 = (step.optDouble("y1") * h).toFloat()
+                    x2 = (step.optDouble("x2") * w).toFloat()
+                    y2 = (step.optDouble("y2") * h).toFloat()
+                } else {
+                    x1 = step.optInt("x1").toFloat()
+                    y1 = step.optInt("y1").toFloat()
+                    x2 = step.optInt("x2").toFloat()
+                    y2 = step.optInt("y2").toFloat()
+                }
+                if (!swipe(x1, y1, x2, y2, duration)) throw IllegalStateException("Не удалось выполнить swipe")
+            }
+            "tap_point" -> {
+                val name = step.optString("name").trim()
+                if (name.isEmpty()) throw IllegalArgumentException("tap_point: name обязателен")
+                val points = payload.optJSONObject("points")
+                    ?: getSharedPreferences("worker", MODE_PRIVATE).getString("points_json", null)?.let {
+                        runCatching { JSONObject(it) }.getOrNull()
+                    }
+                val point = points?.optJSONObject(name)
+                    ?: throw IllegalStateException("Точка «$name» не откалибрована. Используй /point $name x y")
+                val x = point.optInt("x", -1)
+                val y = point.optInt("y", -1)
+                if (x < 0 || y < 0 || !tapCoordinates(x.toFloat(), y.toFloat())) {
+                    throw IllegalStateException("Не удалось нажать точку «$name»")
+                }
+            }
             "launch_app" -> {
                 val packageName = step.optString("package_name").trim()
                 if (packageName.isEmpty()) throw IllegalArgumentException("package_name обязателен")
                 val launch = packageManager.getLaunchIntentForPackage(packageName)
-                    ?: throw IllegalStateException("Приложение не найдено: $packageName")
+                    ?: throw IllegalStateException("Приложение не найдено: $packageName. Проверь: pm list packages | grep -i ztm")
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(launch)
             }
             "capture_ui" -> {
-                // A no-op marker for a future structured UI snapshot step; do not collect account data.
+                // Marker step: accepted by server and client; no PII collection.
             }
             else -> throw IllegalArgumentException("Неизвестный тип шага: ${step.optString("type")}")
         }
@@ -153,6 +205,18 @@ class WorkerAccessibilityService : AccessibilityService() {
         val path = Path().apply { moveTo(x, y) }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 80))
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 24) return false
+        val path = Path().apply {
+            moveTo(x1, y1)
+            lineTo(x2, y2)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
             .build()
         return dispatchGesture(gesture, null, null)
     }
