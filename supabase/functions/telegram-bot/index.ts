@@ -76,7 +76,16 @@ async function saveProfile(telegramUserId: number, chatId: number): Promise<void
   );
 }
 
-type StoredJob = { id: string; task_type: string; status: string; scheduled_at: string; created_at: string; last_error?: string | null; idempotency_key?: string | null };
+type StoredJob = {
+  id: string;
+  task_type: string;
+  status: string;
+  scheduled_at: string;
+  created_at: string;
+  last_error?: string | null;
+  idempotency_key?: string | null;
+  result?: Record<string, unknown> | null;
+};
 
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -248,12 +257,32 @@ async function savePoint(telegramUserId: number, name: string, x: number, y: num
 
 async function listUserJobs(telegramUserId: number): Promise<StoredJob[]> {
   const query = new URLSearchParams({
-    select: "id,task_type,status,scheduled_at,created_at,last_error",
+    select: "id,task_type,status,scheduled_at,created_at,last_error,result",
     telegram_user_id: `eq.${telegramUserId}`,
     order: "created_at.desc",
     limit: "5",
   });
   return await databaseRequest<StoredJob[]>(`psurvival_bot_jobs?${query.toString()}`);
+}
+
+function formatJobSummary(job: StoredJob): string {
+  const line = `• ${job.task_type}: ${job.status} (${job.id.slice(0, 8)})`;
+  const result = job.result;
+  if (!result || typeof result !== "object") return line;
+  const snapshots = Array.isArray(result.ui_snapshots) ? result.ui_snapshots : [];
+  const first = snapshots[0];
+  if (!first || typeof first !== "object") return line;
+  const labels = Array.isArray((first as Record<string, unknown>).labels)
+    ? (first as Record<string, unknown>).labels as unknown[]
+    : [];
+  const visible = labels.slice(0, 5).flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const value = [row.text, row.description].find((v) => typeof v === "string" && v.trim());
+    return typeof value === "string" ? [value.trim().slice(0, 70)] : [];
+  });
+  if (!visible.length) return line + "\n  UI snapshot: labels unavailable (Unity may not expose accessibility text).";
+  return line + "\n  UI: " + visible.join(" · ");
 }
 
 async function enqueueDailyJob(telegramUserId: number, chatId: number, updateId: number, steps: unknown[]): Promise<StoredJob> {
@@ -480,7 +509,7 @@ Deno.serve(async (req: Request) => {
       try {
         const jobs = await listUserJobs(telegramUserId);
         reply = jobs.length
-          ? "Последние задания:\n" + jobs.map((job) => `• ${job.task_type}: ${job.status} (${job.id.slice(0, 8)})`).join("\n")
+          ? "Последние задания:\\n" + jobs.map(formatJobSummary).join("\\n")
           : "Заданий пока нет. Команда /daily создаёт тестовую запись в постоянной очереди.";
       } catch {
         reply = "Не удалось прочитать очередь заданий из Supabase.";
