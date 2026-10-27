@@ -222,6 +222,30 @@ async function setProfileSetting(telegramUserId: number, key: string, rawValue: 
     : `Сохранён пакет игры: ${String(value)}.`;
 }
 
+const SCENARIOS: Record<string, { title: string; points: string[] }> = {
+  launch: { title: "Запуск игры", points: [] },
+  daily_rewards: { title: "Ежедневные награды", points: ["daily_rewards"] },
+  alliance: { title: "Альянс", points: ["alliance"] },
+  tavern: { title: "Таверна Ноя", points: ["tavern"] },
+  mail: { title: "Почта", points: ["mail"] },
+};
+
+async function savePoint(telegramUserId: number, name: string, x: number, y: number): Promise<void> {
+  const settings = await readProfileSettings(telegramUserId);
+  const points = settings.points && typeof settings.points === "object" && !Array.isArray(settings.points)
+    ? settings.points as Record<string, unknown>
+    : {};
+  points[name] = { x, y };
+  settings.points = points;
+  const query = new URLSearchParams({ telegram_user_id: `eq.${telegramUserId}` });
+  const updated = await databaseRequest<Array<{ telegram_user_id: number }>>(
+    `psurvival_bot_profiles?${query.toString()}`,
+    "PATCH",
+    { settings, updated_at: new Date().toISOString() },
+  );
+  if (!updated?.length) throw new Error("profile_point_update_failed");
+}
+
 async function listUserJobs(telegramUserId: number): Promise<StoredJob[]> {
   const query = new URLSearchParams({
     select: "id,task_type,status,scheduled_at,created_at,last_error",
@@ -363,7 +387,7 @@ Deno.serve(async (req: Request) => {
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
     case "help":
-      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сценарий в очередь\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа";
+      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сохранённый сценарий в очередь\n/scenarios — список готовых сценариев\n/scenario <имя> — запустить сценарий\n/point <имя> <x> <y> — откалибровать точку\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа";
       break;
     case "settings": {
       if (telegramUserId === undefined || !serviceKey()) {
@@ -402,6 +426,50 @@ Deno.serve(async (req: Request) => {
         console.error("profile setting update failed", error instanceof Error ? error.message : "unknown");
         reply = "Не удалось сохранить настройку в Supabase.";
       }
+      break;
+    }
+    case "point": {
+      if (telegramUserId === undefined || !serviceKey()) { reply = "Настройки недоступны."; break; }
+      const args = text.replace(/^\\/point(?:@[a-z0-9_]+)?\\s*/i, "").trim().split(/\\s+/);
+      const [name, rawX, rawY] = args;
+      const x = Number(rawX), y = Number(rawY);
+      if (!name || !/^[a-z0-9_]{1,40}$/.test(name) || !Number.isInteger(x) || !Number.isInteger(y) || x < 0 || x > 10000 || y < 0 || y > 10000 || args.length !== 3) {
+        reply = "Формат: /point <имя> <x> <y>. Координаты — доли экрана 0–10000. Например: /point tavern 8500 2400";
+        break;
+      }
+      try { await savePoint(telegramUserId, name, x, y); reply = `Точка ${name} сохранена: x=${x}, y=${y} (0–10000).\nПовторно откалибровать можно той же командой.`; }
+      catch { reply = "Не удалось сохранить точку в Supabase."; }
+      break;
+    }
+    case "scenarios":
+      reply = "Сценарии (для точек сначала нужна калибровка):\\n" +
+        Object.entries(SCENARIOS).map(([name, item]) => `• ${name} — ${item.title}`).join("\\n") +
+        "\\nКалибровка: /point daily_rewards x y, /point alliance x y, /point tavern x y, /point mail x y. Значения x/y — 0–10000.";
+      break;
+    case "scenario": {
+      if (telegramUserId === undefined || !serviceKey()) { reply = "Очередь заданий недоступна."; break; }
+      const name = text.replace(/^\\/scenario(?:@[a-z0-9_]+)?\\s*/i, "").trim().toLowerCase();
+      const scenario = SCENARIOS[name];
+      if (!scenario) { reply = "Неизвестный сценарий. Используй /scenarios."; break; }
+      try {
+        const settings = await readProfileSettings(telegramUserId);
+        const points = settings.points && typeof settings.points === "object" && !Array.isArray(settings.points)
+          ? settings.points as Record<string, unknown> : {};
+        const missing = scenario.points.filter((point) => !points[point] || typeof points[point] !== "object");
+        if (missing.length) {
+          reply = `Сценарий ${name} не поставлен в очередь: не откалиброваны точки ${missing.join(", ")}.\nОткрой игру и отправь /point <имя> <x> <y> для каждой точки. Координаты — доли экрана 0–10000; точные координаты определяешь ты на устройстве.`;
+          break;
+        }
+        const packageName = typeof settings.game_package === "string" ? settings.game_package : "com.global.ztmslg";
+        const steps: unknown[] = [{ type: "launch_app", package_name: packageName }, { type: "wait", duration_ms: 5000 }];
+        for (const pointName of scenario.points) {
+          const point = points[pointName] as Record<string, unknown>;
+          steps.push({ type: "tap_relative", x: point.x, y: point.y });
+          steps.push({ type: "wait", duration_ms: 1500 });
+        }
+        const job = await enqueueDailyJob(telegramUserId, chatId, updateId, steps);
+        reply = `Сценарий ${name} (${scenario.title}) поставлен в очередь. ID: ${job.id}; статус: ${job.status}.\nОн выполнит запуск игры и нажатие по откалиброванной точке входа. Дальнейшие действия внутри экранов нужно калибровать отдельно.`;
+      } catch { reply = "Не удалось создать сценарий. Проверь Supabase и повтори попытку."; }
       break;
     }
     case "tasks": {
