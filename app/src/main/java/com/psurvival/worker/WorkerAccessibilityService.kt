@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
@@ -43,9 +42,10 @@ class WorkerAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         getSharedPreferences("worker", MODE_PRIVATE).edit()
             .putLong("accessibility_service_connected_at", System.currentTimeMillis())
-            .apply()
+            .putString("record_diag_overlay_status", "service_connected")
+            .commit()
         executor.scheduleWithFixedDelay({ pollOrHeartbeat() }, 2, 10, TimeUnit.SECONDS)
-        executor.scheduleWithFixedDelay({ syncRecordingOverlay() }, 1, 1, TimeUnit.SECONDS)
+        executor.scheduleWithFixedDelay({ syncRecordingOverlay() }, 0, 1, TimeUnit.SECONDS)
     }
 
     override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
@@ -57,7 +57,6 @@ class WorkerAccessibilityService : AccessibilityService() {
         val activePackage = event.packageName?.toString().orEmpty()
         if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") return
 
-        // Diagnostics only: count events, never store free-form UI text here.
         synchronized(recordingLock) {
             val total = prefs.getLong("record_diag_total", 0L) + 1L
             prefs.edit()
@@ -68,8 +67,6 @@ class WorkerAccessibilityService : AccessibilityService() {
                 .apply()
         }
 
-        // Secondary path: classical accessibility click nodes (works for normal Android UI).
-        // Unity games usually skip this path; the overlay recorder covers those taps.
         if (event.eventType != android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) return
         val source = event.source ?: return
         if (source.isEditable || source.className?.toString().orEmpty().contains("EditText", true)) return
@@ -84,16 +81,9 @@ class WorkerAccessibilityService : AccessibilityService() {
         val textLabel = source.text?.toString()?.trim()?.take(120).orEmpty()
         val descriptionLabel = source.contentDescription?.toString()?.trim()?.take(120).orEmpty()
         val step = when {
-            textLabel.isNotEmpty() -> JSONObject()
-                .put("type", "tap_text")
-                .put("text", textLabel)
-            descriptionLabel.isNotEmpty() -> JSONObject()
-                .put("type", "tap_description")
-                .put("description", descriptionLabel)
-            else -> JSONObject()
-                .put("type", "tap_relative")
-                .put("x", x)
-                .put("y", y)
+            textLabel.isNotEmpty() -> JSONObject().put("type", "tap_text").put("text", textLabel)
+            descriptionLabel.isNotEmpty() -> JSONObject().put("type", "tap_description").put("description", descriptionLabel)
+            else -> JSONObject().put("type", "tap_relative").put("x", x).put("y", y)
         }
         appendRecordedStep(step, event.eventTime)
     }
@@ -101,7 +91,7 @@ class WorkerAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
-        mainHandler.post { removeRecordingOverlay() }
+        mainHandler.post { removeRecordingOverlay("service_destroyed") }
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -110,33 +100,37 @@ class WorkerAccessibilityService : AccessibilityService() {
         val prefs = getSharedPreferences("worker", MODE_PRIVATE)
         val enabled = prefs.getBoolean("record_game_actions", false)
         mainHandler.post {
-            if (enabled) ensureRecordingOverlay() else removeRecordingOverlay()
+            if (enabled) ensureRecordingOverlay() else removeRecordingOverlay("recording_off")
             updateRecordingBadge()
         }
     }
 
     private fun ensureRecordingOverlay() {
-        if (recordingRoot != null) return
+        if (recordingRoot != null) {
+            setOverlayStatus("shown")
+            return
+        }
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val root = FrameLayout(this).apply {
-            setBackgroundColor(0x22000000)
+            // Visible enough to confirm overlay is present, still see the game under it.
+            setBackgroundColor(0x3300AAFF)
             isClickable = true
             isFocusable = false
             setOnTouchListener { _, event -> handleOverlayTouch(event) }
         }
         val badge = TextView(this).apply {
-            text = "REC"
+            text = "REC · 0"
             setTextColor(Color.WHITE)
-            textSize = 12f
-            setPadding(24, 16, 24, 16)
-            setBackgroundColor(0xCCB71C1C.toInt())
+            textSize = 16f
+            setPadding(36, 22, 36, 22)
+            setBackgroundColor(0xEEB71C1C.toInt())
         }
         val badgeParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            topMargin = 48
+            topMargin = 80
         }
         root.addView(badge, badgeParams)
 
@@ -145,6 +139,7 @@ class WorkerAccessibilityService : AccessibilityService() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
@@ -154,19 +149,31 @@ class WorkerAccessibilityService : AccessibilityService() {
             windowManager.addView(root, params)
             recordingRoot = root
             recordingBadge = badge
+            setOverlayStatus("shown")
             updateRecordingBadge()
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
             recordingRoot = null
             recordingBadge = null
+            setOverlayStatus("error: ${(error.message ?: error.javaClass.simpleName).take(120)}")
         }
     }
 
-    private fun removeRecordingOverlay() {
-        val root = recordingRoot ?: return
-        val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        runCatching { windowManager.removeView(root) }
-        recordingRoot = null
-        recordingBadge = null
+    private fun removeRecordingOverlay(reason: String) {
+        val root = recordingRoot
+        if (root != null) {
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            runCatching { windowManager.removeView(root) }
+            recordingRoot = null
+            recordingBadge = null
+        }
+        setOverlayStatus(reason)
+    }
+
+    private fun setOverlayStatus(status: String) {
+        getSharedPreferences("worker", MODE_PRIVATE).edit()
+            .putString("record_diag_overlay_status", status)
+            .putLong("record_diag_overlay_status_at", System.currentTimeMillis())
+            .apply()
     }
 
     private fun handleOverlayTouch(event: MotionEvent): Boolean {
@@ -185,11 +192,9 @@ class WorkerAccessibilityService : AccessibilityService() {
                     (upX - overlayTouchDownX).toDouble(),
                     (upY - overlayTouchDownY).toDouble(),
                 )
-                // Ignore long-press / drag noise; record only short taps.
-                if (dt <= 900L && moved <= 48.0) {
+                if (dt <= 1200L && moved <= 64.0) {
                     recordOverlayTap(upX, upY)
                 }
-                // Always re-dispatch so the game still receives the interaction.
                 dispatchTap(upX, upY)
                 return true
             }
@@ -200,8 +205,7 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     private fun recordOverlayTap(rawX: Float, rawY: Float) {
         val now = System.currentTimeMillis()
-        // Debounce accidental double captures from gesture + node paths.
-        if (now - lastRecordedTouchAt < 250L) return
+        if (now - lastRecordedTouchAt < 200L) return
         lastRecordedTouchAt = now
 
         val metrics = resources.displayMetrics
@@ -225,7 +229,6 @@ class WorkerAccessibilityService : AccessibilityService() {
             }.getOrDefault(JSONArray())
             if (steps.length() >= 500) return
 
-            // Deduplicate identical relative taps that arrive from both overlay and node paths.
             if (steps.length() > 0) {
                 val last = steps.optJSONObject(steps.length() - 1)
                 if (last != null &&
@@ -240,11 +243,7 @@ class WorkerAccessibilityService : AccessibilityService() {
             val previous = prefs.getLong("record_last_event_time", 0L)
             val gap = if (previous > 0L && recordedAt > previous) recordedAt - previous else 0L
             if (gap >= 700L) {
-                steps.put(
-                    JSONObject()
-                        .put("type", "wait")
-                        .put("duration_ms", gap.coerceIn(700L, 10_000L)),
-                )
+                steps.put(JSONObject().put("type", "wait").put("duration_ms", gap.coerceIn(700L, 10_000L)))
             }
             steps.put(step)
             prefs.edit()
@@ -252,7 +251,7 @@ class WorkerAccessibilityService : AccessibilityService() {
                 .putLong("record_last_event_time", recordedAt)
                 .putLong("record_last_saved_at", System.currentTimeMillis())
                 .putInt("record_diag_overlay_taps", prefs.getInt("record_diag_overlay_taps", 0) + 1)
-                .apply()
+                .commit()
         }
     }
 
@@ -267,10 +266,7 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     private fun dispatchTap(rawX: Float, rawY: Float) {
         if (android.os.Build.VERSION.SDK_INT < 24) return
-        // Small delay so the overlay finishes handling the original MotionEvent first.
-        mainHandler.postDelayed({
-            tapCoordinates(rawX, rawY)
-        }, 40L)
+        mainHandler.postDelayed({ tapCoordinates(rawX, rawY) }, 40L)
     }
 
     private fun settings(): Pair<String, String>? {
@@ -306,11 +302,10 @@ class WorkerAccessibilityService : AccessibilityService() {
     private fun executeJob(token: String, job: JSONObject) {
         val jobId = job.optString("id")
         try {
-            // Never run jobs while the recording overlay intercepts touches.
-            mainHandler.post { removeRecordingOverlay() }
+            mainHandler.post { removeRecordingOverlay("job_running") }
             getSharedPreferences("worker", MODE_PRIVATE).edit()
                 .putBoolean("record_game_actions", false)
-                .apply()
+                .commit()
 
             capturedUiSnapshots.clear()
             val payload = job.optJSONObject("payload") ?: JSONObject()
@@ -418,9 +413,7 @@ class WorkerAccessibilityService : AccessibilityService() {
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(launch)
             }
-            "capture_ui" -> {
-                capturedUiSnapshots.add(captureGameUiSnapshot())
-            }
+            "capture_ui" -> capturedUiSnapshots.add(captureGameUiSnapshot())
             else -> throw IllegalArgumentException("Неизвестный тип шага: ${step.optString("type")}")
         }
     }
@@ -434,7 +427,6 @@ class WorkerAccessibilityService : AccessibilityService() {
         if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") {
             throw IllegalStateException("capture_ui заблокирован вне игры: $activePackage")
         }
-
         val labels = JSONArray()
         var visited = 0
         fun walk(node: AccessibilityNodeInfo) {
@@ -498,10 +490,7 @@ class WorkerAccessibilityService : AccessibilityService() {
         return dispatchGestureAndWait(gesture, 3_000L)
     }
 
-    private fun dispatchGestureAndWait(
-        gesture: GestureDescription,
-        timeoutMs: Long,
-    ): Boolean {
+    private fun dispatchGestureAndWait(gesture: GestureDescription, timeoutMs: Long): Boolean {
         val latch = CountDownLatch(1)
         val completed = AtomicBoolean(false)
         val accepted = dispatchGesture(
