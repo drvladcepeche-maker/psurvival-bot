@@ -21,6 +21,7 @@ class WorkerAccessibilityService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var activeJobId: String? = null
     @Volatile private var lastHeartbeatAt = 0L
+    private val capturedUiSnapshots = mutableListOf<JSONObject>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -68,6 +69,7 @@ class WorkerAccessibilityService : AccessibilityService() {
     private fun executeJob(token: String, job: JSONObject) {
         val jobId = job.optString("id")
         try {
+            capturedUiSnapshots.clear()
             val payload = job.optJSONObject("payload") ?: JSONObject()
             val steps = payload.optJSONArray("steps") ?: JSONArray()
             if (steps.length() == 0) throw IllegalArgumentException("Задание не содержит steps; шаблон действий не настроен")
@@ -75,6 +77,11 @@ class WorkerAccessibilityService : AccessibilityService() {
             for (i in 0 until steps.length()) {
                 val step = steps.optJSONObject(i) ?: throw IllegalArgumentException("Некорректный шаг #$i")
                 executeStep(step)
+            }
+            if (capturedUiSnapshots.isNotEmpty()) {
+                val snapshots = JSONArray()
+                capturedUiSnapshots.forEach { snapshots.put(it) }
+                result.put("ui_snapshots", snapshots)
             }
             api(token, JSONObject().put("action", "complete").put("job_id", jobId).put("result", result))
         } catch (error: Throwable) {
@@ -156,10 +163,56 @@ class WorkerAccessibilityService : AccessibilityService() {
                 startActivity(launch)
             }
             "capture_ui" -> {
-                // A no-op marker for a future structured UI snapshot step; do not collect account data.
+                capturedUiSnapshots.add(captureGameUiSnapshot())
             }
             else -> throw IllegalArgumentException("Неизвестный тип шага: ${step.optString("type")}")
         }
+    }
+
+    /**
+     * Captures only visible, non-editable accessibility labels from the selected game window.
+     * Avoids screenshots, input fields, account credentials, and unrelated apps.
+     */
+    private fun captureGameUiSnapshot(): JSONObject {
+        val root = rootInActiveWindow ?: throw IllegalStateException("Нет активного окна для capture_ui")
+        val activePackage = root.packageName?.toString().orEmpty()
+        val prefs = getSharedPreferences("worker", MODE_PRIVATE)
+        val selectedPackage = prefs.getString("selected_game_package", "com.global.ztmslg")
+            .orEmpty().ifBlank { "com.global.ztmslg" }
+        if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") {
+            throw IllegalStateException("capture_ui заблокирован вне игры: $activePackage")
+        }
+
+        val labels = JSONArray()
+        var visited = 0
+        fun walk(node: AccessibilityNodeInfo) {
+            if (visited >= 100 || labels.length() >= 60) return
+            visited++
+            val className = node.className?.toString().orEmpty()
+            val isEditable = node.isEditable || className.contains("EditText", ignoreCase = true)
+            if (!isEditable) {
+                val text = node.text?.toString()?.trim().orEmpty().take(120)
+                val description = node.contentDescription?.toString()?.trim().orEmpty().take(120)
+                if (text.isNotEmpty() || description.isNotEmpty()) {
+                    val item = JSONObject().put("clickable", node.isClickable)
+                    if (text.isNotEmpty()) item.put("text", text)
+                    if (description.isNotEmpty()) item.put("description", description)
+                    labels.put(item)
+                }
+            }
+            for (i in 0 until node.childCount) {
+                if (visited >= 100 || labels.length() >= 60) break
+                val child = node.getChild(i) ?: continue
+                walk(child)
+            }
+        }
+        walk(root)
+        return JSONObject()
+            .put("package_name", activePackage)
+            .put("captured_at_ms", System.currentTimeMillis())
+            .put("node_count", visited)
+            .put("labels", labels)
+            .put("note", if (labels.length() == 0) "No accessible labels; Unity-rendered UI may not expose text nodes." else "")
     }
 
     private fun tapMatchingNode(needle: String, description: Boolean): Boolean {
