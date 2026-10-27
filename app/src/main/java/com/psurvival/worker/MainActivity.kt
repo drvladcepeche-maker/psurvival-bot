@@ -5,20 +5,32 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.Spinner
+import android.widget.ScrollView
 import android.widget.TextView
 import java.net.HttpURLConnection
 import java.net.URL
+
+private data class GameTarget(val label: String, val packageName: String) {
+    override fun toString(): String = "$label  ·  $packageName"
+}
 
 class MainActivity : Activity() {
     private lateinit var workerId: EditText
     private lateinit var token: EditText
     private lateinit var status: TextView
+    private lateinit var gameTargetSpinner: Spinner
+    private lateinit var gameAdapter: ArrayAdapter<GameTarget>
+    private var gameTargets: List<GameTarget> = emptyList()
 
-    private val gamePackage = "com.global.ztmslg"
+    private val defaultGamePackage = "com.global.ztmslg"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,6 +65,7 @@ class MainActivity : Activity() {
                 prefs.edit()
                     .putString("worker_id", workerId.text.toString().trim())
                     .putString("token", token.text.toString().trim())
+                    .putString("selected_game_package", selectedGamePackage())
                     .apply()
                 status.text = "Настройки сохранены. Теперь включи службу доступности ниже."
             }
@@ -60,33 +73,65 @@ class MainActivity : Activity() {
         root.addView(save, matchWidth())
 
         root.addView(TextView(this).apply {
-            text = "Игровой аккаунт"
+            text = "Экземпляр игры"
             textSize = 20f
         }, matchWidth())
         root.addView(TextView(this).apply {
-            text = "Вход выполняется в самой игре. Worker не запрашивает и не сохраняет пароль Google или игровой пароль."
+            text = "Выбери оригинал или клон. Выбор сохраняется и используется также для удалённых заданий запуска игры."
             textSize = 14f
         }, matchWidth())
+
+        gameTargetSpinner = Spinner(this)
+        gameTargets = discoverGameTargets()
+        gameAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, gameTargets).also {
+            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        gameTargetSpinner.adapter = gameAdapter
+        val savedTarget = prefs.getString("selected_game_package", defaultGamePackage).orEmpty()
+        val selectedIndex = gameTargets.indexOfFirst { it.packageName == savedTarget }
+            .takeIf { it >= 0 }
+            ?: gameTargets.indexOfFirst { it.packageName == defaultGamePackage }.coerceAtLeast(0)
+        gameTargetSpinner.setSelection(selectedIndex)
+        root.addView(gameTargetSpinner, matchWidth())
+        gameTargetSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                gameTargets.getOrNull(position)?.let { target ->
+                    prefs.edit().putString("selected_game_package", target.packageName).apply()
+                    status.text = "Выбран экземпляр игры: ${target.label} (${target.packageName})"
+                }
+            }
+        }
         root.addView(Button(this).apply {
-            text = "Проверить, установлена ли игра"
-            setOnClickListener { status.text = checkGameInstalled() }
-        }, matchWidth())
-        root.addView(Button(this).apply {
-            text = "Открыть игру — вход через Google"
+            text = "Обновить список оригинала и клона"
             setOnClickListener {
-                val result = launchGame()
-                status.text = if (result == null) {
-                    "Игра открыта. На её экране выбери штатный вход через Google и подтверди нужный аккаунт."
-                } else result
+                val previous = selectedGamePackage()
+                gameTargets = discoverGameTargets()
+                gameAdapter.clear()
+                gameAdapter.addAll(gameTargets)
+                val index = gameTargets.indexOfFirst { it.packageName == previous }
+                    .takeIf { it >= 0 }
+                    ?: gameTargets.indexOfFirst { it.packageName == defaultGamePackage }.coerceAtLeast(0)
+                gameTargetSpinner.setSelection(index)
+                status.text = "Найдено подходящих вариантов: ${gameTargets.size}. Если клон не появился, Android может изолировать его в отдельном профиле."
             }
         }, matchWidth())
         root.addView(Button(this).apply {
-            text = "Открыть игру — вход по email"
+            text = "Проверить, установлен ли выбранный экземпляр"
+            setOnClickListener { status.text = checkGameInstalled() }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Открыть выбранную игру — вход через Google"
             setOnClickListener {
                 val result = launchGame()
-                status.text = if (result == null) {
-                    "Игра открыта. На её экране выбери вход по email и введи данные непосредственно в игре."
-                } else result
+                status.text = result ?: "Игра открыта. На её экране выбери штатный вход через Google и подтверди нужный аккаунт."
+            }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Открыть выбранную игру — вход по email"
+            setOnClickListener {
+                val result = launchGame()
+                status.text = result ?: "Игра открыта. На её экране выбери вход по email и введи данные непосредственно в игре."
             }
         }, matchWidth())
 
@@ -117,22 +162,53 @@ class MainActivity : Activity() {
             textSize = 14f
         }
         root.addView(status, matchWidth())
-        setContentView(root)
+        val scrollView = ScrollView(this).apply {
+            isFillViewport = true
+            addView(root)
+        }
+        setContentView(scrollView)
+    }
+
+    private fun discoverGameTargets(): List<GameTarget> {
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager.queryIntentActivities(launcherIntent, 0)
+            .mapNotNull { resolveInfo ->
+                val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
+                val packageName = activityInfo.packageName
+                val label = resolveInfo.loadLabel(packageManager)?.toString().orEmpty()
+                val normalized = label.lowercase(java.util.Locale.ROOT)
+                val isGame = packageName == defaultGamePackage ||
+                    packageName.contains("ztmslg", ignoreCase = true) ||
+                    (normalized.contains("puzzle") && normalized.contains("survival")) ||
+                    (normalized.contains("пазл") && normalized.contains("выжив"))
+                if (isGame) GameTarget(label.ifBlank { packageName }, packageName) else null
+            }
+            .distinctBy { it.packageName }
+            .sortedWith(compareBy<GameTarget> { it.packageName != defaultGamePackage }.thenBy { it.label })
+            .ifEmpty { listOf(GameTarget("Puzzles & Survival (пакет по умолчанию)", defaultGamePackage)) }
+    }
+
+    private fun selectedGamePackage(): String {
+        return gameTargets.getOrNull(gameTargetSpinner.selectedItemPosition)?.packageName
+            ?: getSharedPreferences("worker", MODE_PRIVATE)
+                .getString("selected_game_package", defaultGamePackage).orEmpty()
     }
 
     private fun checkGameInstalled(): String {
+        val packageName = selectedGamePackage()
         return try {
-            packageManager.getPackageInfo(gamePackage, 0)
-            "Игра обнаружена: $gamePackage"
+            packageManager.getPackageInfo(packageName, 0)
+            "Выбранный экземпляр обнаружен: $packageName"
         } catch (_: PackageManager.NameNotFoundException) {
-            "Игра не обнаружена. Установи нужную версию Puzzles & Survival или проверь идентификатор пакета."
+            "Выбранный экземпляр не обнаружен: $packageName. Обнови список и проверь, виден ли клон Android."
         } catch (error: Exception) {
             "Не удалось проверить игру: ${error.message}"
         }
     }
 
     private fun launchGame(): String? {
-        val launch = packageManager.getLaunchIntentForPackage(gamePackage)
+        val packageName = selectedGamePackage()
+        val launch = packageManager.getLaunchIntentForPackage(packageName)
             ?: return checkGameInstalled()
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {

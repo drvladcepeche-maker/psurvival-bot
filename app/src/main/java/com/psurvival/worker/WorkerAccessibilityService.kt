@@ -138,8 +138,16 @@ class WorkerAccessibilityService : AccessibilityService() {
                 if (!dispatchGesture(gesture, null, null)) throw IllegalStateException("Не удалось выполнить swipe")
             }
             "launch_app" -> {
-                val packageName = step.optString("package_name").trim()
-                if (packageName.isEmpty()) throw IllegalArgumentException("package_name обязателен")
+                val requestedPackage = step.optString("package_name").trim()
+                if (requestedPackage.isEmpty()) throw IllegalArgumentException("package_name обязателен")
+                val prefs = getSharedPreferences("worker", MODE_PRIVATE)
+                val selectedGamePackage = prefs.getString("selected_game_package", "").orEmpty().trim()
+                // Existing server scenarios default to the original package; route those launches
+                // to the user-selected original/clone. Explicit unrelated app launches stay intact.
+                val packageName = if (
+                    selectedGamePackage.isNotEmpty() &&
+                    (requestedPackage == "com.global.ztmslg" || requestedPackage == selectedGamePackage)
+                ) selectedGamePackage else requestedPackage
                 val launch = packageManager.getLaunchIntentForPackage(packageName)
                     ?: throw IllegalStateException("Приложение не найдено: $packageName")
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
