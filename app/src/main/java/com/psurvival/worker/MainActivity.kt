@@ -154,6 +154,11 @@ class MainActivity : Activity() {
                 prefs.edit()
                     .putBoolean("record_game_actions", true)
                     .putString("recorded_game_steps", "[]")
+                    .putLong("record_diag_total", 0L)
+                    .putInt("record_diag_last_type", 0)
+                    .putString("record_diag_last_package", "")
+                    .putLong("record_diag_last_at", 0L)
+                    .putLong("recording_started_at", System.currentTimeMillis())
                     .remove("record_last_event_time")
                     .apply()
                 status.text = "Запись включена. Перейди в выбранную игру и выполни нужные действия."
@@ -166,6 +171,32 @@ class MainActivity : Activity() {
                 prefs.edit().putBoolean("record_game_actions", false).remove("record_last_event_time").apply()
                 status.text = "Запись остановлена."
                 refreshRecordedSteps()
+            }
+        }, matchWidth())
+        root.addView(Button(this).apply {
+            text = "Диагностика записи"
+            setOnClickListener {
+                val connectedAt = prefs.getLong("accessibility_service_connected_at", 0L)
+                val startedAt = prefs.getLong("recording_started_at", 0L)
+                val eventTotal = prefs.getLong("record_diag_total", 0L)
+                val lastType = prefs.getInt("record_diag_last_type", 0)
+                val lastPackage = prefs.getString("record_diag_last_package", "").orEmpty()
+                val lastAt = prefs.getLong("record_diag_last_at", 0L)
+                val eventName = when (lastType) {
+                    android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WINDOW_STATE_CHANGED"
+                    android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "WINDOW_CONTENT_CHANGED"
+                    android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED -> "VIEW_CLICKED"
+                    else -> if (lastType == 0) "нет" else "тип=$lastType"
+                }
+                status.text = "Служба доступности подключалась: " +
+                    (if (connectedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(connectedAt)) else "нет отметки") +
+                    "\nНачало записи: " +
+                    (if (startedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(startedAt)) else "не запускалась") +
+                    "\nСобытий игры во время записи: $eventTotal" +
+                    "\nПоследнее событие: $eventName" +
+                    "\nПакет: " + (lastPackage.ifBlank { "нет" }) +
+                    "\nВремя последнего события: " +
+                    (if (lastAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(lastAt)) else "нет")
             }
         }, matchWidth())
         root.addView(Button(this).apply {

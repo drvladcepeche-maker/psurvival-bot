@@ -25,6 +25,9 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        getSharedPreferences("worker", MODE_PRIVATE).edit()
+            .putLong("accessibility_service_connected_at", System.currentTimeMillis())
+            .apply()
         executor.scheduleWithFixedDelay({ pollOrHeartbeat() }, 2, 10, TimeUnit.SECONDS)
     }
 
@@ -36,6 +39,18 @@ class WorkerAccessibilityService : AccessibilityService() {
             .orEmpty().ifBlank { "com.global.ztmslg" }
         val activePackage = event.packageName?.toString().orEmpty()
         if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") return
+
+        // Minimal local diagnostics: count event types and record only package/type/time,
+        // never UI text, screenshots, credentials, or chat contents.
+        synchronized(recordingLock) {
+            val total = prefs.getLong("record_diag_total", 0L) + 1L
+            prefs.edit()
+                .putLong("record_diag_total", total)
+                .putInt("record_diag_last_type", event.eventType)
+                .putString("record_diag_last_package", activePackage)
+                .putLong("record_diag_last_at", System.currentTimeMillis())
+                .apply()
+        }
 
         // Record only explicit accessibility click events. No screenshots, text fields,
         // passwords, chat contents, or events from other apps are captured.
