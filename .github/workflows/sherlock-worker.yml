@@ -1,0 +1,43 @@
+name: Sherlock queue worker
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - feature/sherlock-telegram-integration
+
+concurrency:
+  group: sherlock-queue-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  process-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sherlock-worker/requirements.txt
+      - name: Install Sherlock worker
+        working-directory: sherlock-worker
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Validate Python syntax
+        run: python -m py_compile sherlock-worker/worker.py
+      - name: Process queued searches
+        env:
+          SUPABASE_URL: https://xevqbgjtxuveeqaiacvm.supabase.co
+          SHERLOCK_TIMEOUT: "20"
+          SHERLOCK_MAX_SITES: "500"
+        run: python -u sherlock-worker/worker.py
