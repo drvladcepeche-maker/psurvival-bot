@@ -761,7 +761,7 @@ Deno.serve(async (req: Request) => {
       break;
     }
     case "about":
-      reply = "Реализованы Telegram-команды, постоянные профили, очередь заданий, API исполнителя и Android-клиент. Доступны /scenarios, /scenario, /point; координаты точек задаёт пользователь. Нажатия по экрану и игровые сценарии требуют проверки на вашем устройстве.";
+      reply = "Бот поддерживает очередь заданий, Android-исполнителя, проверку Telegram-контактов и Sherlock для поиска публичных профилей по username. Sherlock запускается отдельным Python Worker; используй /sherlock и /sherlock_status."
       break;
     case "status": {
       const info = await telegramApi<{ url?: string; pending_update_count?: number; last_error_message?: string }>(botToken, "getWebhookInfo");
