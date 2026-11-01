@@ -6,6 +6,7 @@ from typing import Any
 import requests
 from sherlock_project.sherlock import sherlock
 from sherlock_project.sites import SitesInformation
+from sherlock_project.notify import QueryNotify
 from sherlock_project.result import QueryStatus
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -51,6 +52,12 @@ def patch_job(job_id: str, payload: dict[str, Any], notification: str | None = N
              "payload": payload, "notification": notification})
 
 
+class Collector(QueryNotify):
+    def update(self, result) -> None:
+        # Sherlock requires a notifier callback even when progress is not streamed.
+        return None
+
+
 def process(job: dict[str, Any]) -> None:
     job_id, username = job["id"], job["username"]
     try:
@@ -62,7 +69,7 @@ def process(job: dict[str, Any]) -> None:
         patch_job(job_id, {"total_sites": len(site_data),
                            "updated_at": datetime.now(timezone.utc).isoformat()})
         log.info("Starting %s across %s sites", username, len(site_data))
-        results = sherlock(username=username, site_data=site_data, timeout=REQUEST_TIMEOUT)
+        results = sherlock(username=username, site_data=site_data, query_notify=Collector(), timeout=REQUEST_TIMEOUT)
         normalized = []
         for site_name, site_result in results.items():
             result = site_result.get("status")
