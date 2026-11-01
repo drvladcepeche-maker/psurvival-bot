@@ -113,3 +113,5 @@ Keep secrets out of source control. Do not use this prototype to bypass game pro
 - [Integration test matrix](docs/integration-test-matrix.md) — end-to-end checks for Telegram, Supabase queue, Android worker and game launch.
 
 These documents do not claim that a physical-device test has already passed. The current worker executes UI steps but cannot semantically verify game state or reliably infer screens from visual content.
+
+Each worker invocation drains the current queue before exiting; Telegram webhook requests only enqueue jobs and never wait for a Sherlock scan.
