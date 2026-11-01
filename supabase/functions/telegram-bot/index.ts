@@ -397,6 +397,38 @@ async function listTelegramMatchJobs(telegramUserId: number): Promise<Array<{
   return await databaseRequest(`telegram_match_jobs?${query.toString()}`);
 }
 
+
+async function enqueueSherlockJobs(telegramUserId: number, chatId: number, updateId: number, usernames: string[]): Promise<number> {
+  const rows = usernames.map((username, index) => ({
+    telegram_user_id: telegramUserId,
+    chat_id: chatId,
+    username,
+    request_key: `${updateId}:${index}`,
+    status: "queued",
+  }));
+  const query = "sherlock_jobs?on_conflict=telegram_user_id,request_key";
+  const inserted = await databaseRequest<Array<{ id: string }>>(
+    query,
+    "POST",
+    rows,
+    "return=representation,resolution=ignore-duplicates",
+  );
+  return inserted?.length ?? 0;
+}
+
+async function listSherlockJobs(telegramUserId: number, limit = 5): Promise<Array<{
+  id: string; username: string; status: string; total_sites: number; checked_sites: number;
+  found_count: number; error_message?: string | null; created_at: string;
+}>> {
+  const query = new URLSearchParams({
+    select: "id,username,status,total_sites,checked_sites,found_count,error_message,created_at",
+    telegram_user_id: `eq.${telegramUserId}`,
+    order: "created_at.desc",
+    limit: String(limit),
+  });
+  return await databaseRequest(`sherlock_jobs?${query.toString()}`);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "GET") {
     const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
@@ -506,7 +538,7 @@ Deno.serve(async (req: Request) => {
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
     case "help":
-      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сохранённый сценарий в очередь\n/scenarios — список готовых сценариев\n/scenario <имя> — запустить сценарий\n/point <имя> <x> <y> — откалибровать точку\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа\n/telegram_match — проверить номера контактов через серверную MTProto-сессию (только владелец)\n/telegram_status — состояние проверки контактов";
+      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сохранённый сценарий в очередь\n/scenarios — список готовых сценариев\n/scenario <имя> — запустить сценарий\n/point <имя> <x> <y> — откалибровать точку\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа\n/telegram_match — проверить номера контактов через серверную MTProto-сессию (только владелец)\n/telegram_status — состояние проверки контактов\n/sherlock <username> — поиск публичных профилей по username\n/sherlock_status — последние поисковые задания Sherlock\n/sherlock_history — история поисков Sherlock";
       break;
     case "settings": {
       if (telegramUserId === undefined || !serviceKey()) {
@@ -685,6 +717,46 @@ Deno.serve(async (req: Request) => {
         reply = message === "telegram_resolver_owner_only"
           ? "Доступ запрещён: команда доступна только владельцу."
           : "Не удалось прочитать состояние очереди Telegram.";
+      }
+      break;
+    }
+    case "sherlock": {
+      if (telegramUserId === undefined || chatId !== telegramUserId) {
+        reply = "Команда Sherlock доступна только в личном чате.";
+        break;
+      }
+      const raw = text.replace(/^\\/sherlock(?:@[a-z0-9_]+)?\\s*/i, "").trim();
+      const usernames = [...new Set(raw.split(/[\\s,]+/).filter(Boolean))];
+      if (!usernames.length || usernames.length > 5 || usernames.some((name) => !/^[A-Za-z0-9_.-]{1,64}$/.test(name))) {
+        reply = "Формат: /sherlock username. Можно передать до 5 username через пробел. Допустимы латинские буквы, цифры, точка, дефис и подчёркивание; длина 1–64 символа.";
+        break;
+      }
+      if (!serviceKey()) { reply = "Очередь Sherlock не настроена: отсутствует серверный ключ Supabase."; break; }
+      try {
+        const queued = await enqueueSherlockJobs(telegramUserId, chatId, updateId, usernames);
+        reply = queued
+          ? `В очередь Sherlock добавлено заданий: ${queued}.\\nUsername: ${usernames.join(", ")}\\nПроверка идёт по публичным профилям; приватные данные и личности владельцев не устанавливаются. Результаты придут отдельным сообщением. Статус: /sherlock_status.`
+          : "Эти задания уже были поставлены в очередь для данного сообщения. Проверь /sherlock_status.";
+      } catch (error) {
+        console.error("sherlock enqueue failed", error instanceof Error ? error.message : "unknown");
+        reply = "Не удалось поставить Sherlock в очередь. Убедись, что миграция sherlock_search_queue применена в Supabase.";
+      }
+      break;
+    }
+    case "sherlock_status":
+    case "sherlock_history": {
+      if (telegramUserId === undefined || chatId !== telegramUserId) {
+        reply = "Команда доступна только в личном чате.";
+        break;
+      }
+      try {
+        const jobs = await listSherlockJobs(telegramUserId, command === "sherlock_history" ? 10 : 5);
+        reply = jobs.length
+          ? (command === "sherlock_history" ? "История Sherlock:" : "Состояние Sherlock:") + "\\n" +
+            jobs.map((job) => `• ${job.username}: ${job.status}; найдено ${job.found_count}; проверено ${job.checked_sites}/${job.total_sites}; ID ${job.id.slice(0, 8)}${job.error_message ? `; ошибка: ${job.error_message.slice(0, 100)}` : ""}`).join("\\n")
+          : "Заданий Sherlock пока нет. Запусти /sherlock username.";
+      } catch {
+        reply = "Не удалось прочитать очередь Sherlock. Проверь применение миграции Supabase.";
       }
       break;
     }
