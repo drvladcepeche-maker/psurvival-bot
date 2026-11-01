@@ -319,7 +319,7 @@ function normalizeInternationalPhone(value: unknown): string | null {
   const raw = value.trim();
   if (!raw.startsWith("+")) return null;
   const digits = raw.replace(/\D/g, "");
-  return digits.length >= 8 && digits.length <= 15 ? \`+\${digits}\` : null;
+  return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
 }
 
 async function queueTelegramContactMatches(telegramUserId: number): Promise<{ jobs: number; candidates: number }> {
@@ -338,7 +338,7 @@ async function queueTelegramContactMatches(telegramUserId: number): Promise<{ jo
     });
     const rows = await databaseRequest<Array<{
       device_id: string; local_contact_id: string; contact_data: Record<string, unknown>;
-    }>>(\`contact_bridge_snapshots?\${query.toString()}\`);
+    }>>(`contact_bridge_snapshots?${query.toString()}`);
     if (!rows.length) break;
     for (const row of rows) {
       const contact = row.contact_data && typeof row.contact_data === "object" ? row.contact_data : {};
@@ -346,7 +346,7 @@ async function queueTelegramContactMatches(telegramUserId: number): Promise<{ jo
       for (const rawPhone of phones) {
         const phone = normalizeInternationalPhone(rawPhone);
         if (!phone) continue;
-        const key = \`\${row.device_id}:\${row.local_contact_id}:\${phone}\`;
+        const key = `${row.device_id}:${row.local_contact_id}:${phone}`;
         if (seen.has(key)) continue;
         seen.add(key);
         const status = String(contact.telegram_match_status ?? "");
@@ -386,11 +386,11 @@ async function listTelegramMatchJobs(telegramUserId: number): Promise<Array<{
   if (!ownerId || String(telegramUserId) !== ownerId) throw new Error("telegram_resolver_owner_only");
   const query = new URLSearchParams({
     select: "id,status,checked,matched,errors,phones,created_at,error_message",
-    requested_by_telegram_user_id: \`eq.\${telegramUserId}\`,
+    requested_by_telegram_user_id: `eq.${telegramUserId}`,
     order: "created_at.desc",
     limit: "5",
   });
-  return await databaseRequest(\`telegram_match_jobs?\${query.toString()}\`);
+  return await databaseRequest(`telegram_match_jobs?${query.toString()}`);
 }
 
 Deno.serve(async (req: Request) => {
