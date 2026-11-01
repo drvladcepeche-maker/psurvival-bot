@@ -351,7 +351,11 @@ async function queueTelegramContactMatches(telegramUserId: number): Promise<{ jo
         seen.add(key);
         const status = String(contact.telegram_match_status ?? "");
         const checkedPhone = String(contact.telegram_match_phone ?? "");
-        if (checkedPhone === phone && ["matched", "username_missing", "not_resolved"].includes(status)) continue;
+        const checkedPhones = Array.isArray(contact.telegram_match_checked_phones)
+          ? contact.telegram_match_checked_phones.filter((value): value is string => typeof value === "string")
+          : [];
+        if (checkedPhones.includes(phone) ||
+            (checkedPhone === phone && ["matched", "username_missing", "not_resolved"].includes(status))) continue;
         if (!status && typeof contact.telegram_username === "string" &&
             contact.telegram_username.trim() && contact.telegram_username !== "СКРЫТ") continue;
         candidates.push({
