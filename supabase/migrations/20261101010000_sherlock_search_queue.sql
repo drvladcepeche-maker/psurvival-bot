@@ -26,7 +26,7 @@ grant all on public.sherlock_jobs to service_role;
 
 create or replace function public.sherlock_claim_next_job(p_worker_id text)
 returns setof public.sherlock_jobs
-language plpgsql security definer
+language plpgsql security invoker
 set search_path = pg_catalog, public
 as $$
 begin
