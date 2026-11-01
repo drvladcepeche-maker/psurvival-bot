@@ -23,6 +23,7 @@ jobs:
         run: |
           deno check supabase/functions/telegram-bot/index.ts
           deno check supabase/functions/psurvival-worker/index.ts
+          deno check supabase/functions/sherlock-worker-gateway/index.ts
       - name: Test webhook secret validation
         run: deno test supabase/functions/telegram-bot/tests/
       - name: Syntax-check Sherlock Python worker
