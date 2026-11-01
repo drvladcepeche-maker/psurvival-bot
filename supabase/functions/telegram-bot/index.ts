@@ -593,7 +593,7 @@ Deno.serve(async (req: Request) => {
       break;
     }
     case "scenarios":
-      reply = "Сценарии (для точек сначала нужна калибровка):\\n" +
+      reply = "Сценарии (для точек сначала нужна калибровка):\n" +
         Object.entries(SCENARIOS).map(([name, item]) => `• ${name} — ${item.title}`).join("\n") +
         "\nКалибровка: /point daily_rewards x y, /point alliance x y, /point tavern x y, /point mail x y. Значения x/y — 0–10000.";
       break;
@@ -708,9 +708,9 @@ Deno.serve(async (req: Request) => {
       try {
         const jobs = await listTelegramMatchJobs(telegramUserId);
         reply = jobs.length
-          ? "Последние задания проверки Telegram:\\n" + jobs.map(job =>
-              `• ${job.status}: ${job.checked}/${Array.isArray(job.phones) ? job.phones.length : 0}; найдено ${job.matched}; ошибок ${job.errors}; ID ${job.id.slice(0, 8)}${job.error_message ? `\\n  ${job.error_message.slice(0, 120)}` : ""}`
-            ).join("\\n")
+          ? "Последние задания проверки Telegram:\n" + jobs.map(job =>
+              `• ${job.status}: ${job.checked}/${Array.isArray(job.phones) ? job.phones.length : 0}; найдено ${job.matched}; ошибок ${job.errors}; ID ${job.id.slice(0, 8)}${job.error_message ? `\n  ${job.error_message.slice(0, 120)}` : ""}`
+            ).join("\n")
           : "Заданий проверки Telegram пока нет. Запусти /telegram_match.";
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -725,8 +725,8 @@ Deno.serve(async (req: Request) => {
         reply = "Команда Sherlock доступна только в личном чате.";
         break;
       }
-      const raw = text.replace(/^\\/sherlock(?:@[a-z0-9_]+)?\\s*/i, "").trim();
-      const usernames = [...new Set(raw.split(/[\\s,]+/).filter(Boolean))];
+      const raw = text.replace(/^\/sherlock(?:@[a-z0-9_]+)?\s*/i, "").trim();
+      const usernames = [...new Set(raw.split(/[\s,]+/).filter(Boolean))];
       if (!usernames.length || usernames.length > 5 || usernames.some((name) => !/^[A-Za-z0-9_.-]{1,64}$/.test(name))) {
         reply = "Формат: /sherlock username. Можно передать до 5 username через пробел. Допустимы латинские буквы, цифры, точка, дефис и подчёркивание; длина 1–64 символа.";
         break;
@@ -735,7 +735,7 @@ Deno.serve(async (req: Request) => {
       try {
         const queued = await enqueueSherlockJobs(telegramUserId, chatId, updateId, usernames);
         reply = queued
-          ? `В очередь Sherlock добавлено заданий: ${queued}.\\nUsername: ${usernames.join(", ")}\\nПроверка идёт по публичным профилям; приватные данные и личности владельцев не устанавливаются. Результаты придут отдельным сообщением. Статус: /sherlock_status.`
+          ? `В очередь Sherlock добавлено заданий: ${queued}.\nUsername: ${usernames.join(", ")}\nПроверка идёт по публичным профилям; приватные данные и личности владельцев не устанавливаются. Результаты придут отдельным сообщением. Статус: /sherlock_status.`
           : "Эти задания уже были поставлены в очередь для данного сообщения. Проверь /sherlock_status.";
       } catch (error) {
         console.error("sherlock enqueue failed", error instanceof Error ? error.message : "unknown");
@@ -752,8 +752,8 @@ Deno.serve(async (req: Request) => {
       try {
         const jobs = await listSherlockJobs(telegramUserId, command === "sherlock_history" ? 10 : 5);
         reply = jobs.length
-          ? (command === "sherlock_history" ? "История Sherlock:" : "Состояние Sherlock:") + "\\n" +
-            jobs.map((job) => `• ${job.username}: ${job.status}; найдено ${job.found_count}; проверено ${job.checked_sites}/${job.total_sites}; ID ${job.id.slice(0, 8)}${job.error_message ? `; ошибка: ${job.error_message.slice(0, 100)}` : ""}`).join("\\n")
+          ? (command === "sherlock_history" ? "История Sherlock:" : "Состояние Sherlock:") + "\n" +
+            jobs.map((job) => `• ${job.username}: ${job.status}; найдено ${job.found_count}; проверено ${job.checked_sites}/${job.total_sites}; ID ${job.id.slice(0, 8)}${job.error_message ? `; ошибка: ${job.error_message.slice(0, 100)}` : ""}`).join("\n")
           : "Заданий Sherlock пока нет. Запусти /sherlock username.";
       } catch {
         reply = "Не удалось прочитать очередь Sherlock. Проверь применение миграции Supabase.";
