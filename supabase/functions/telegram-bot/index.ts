@@ -312,6 +312,87 @@ async function enqueueDailyJob(telegramUserId: number, chatId: number, updateId:
   throw new Error("database_job_insert_returned_no_row");
 }
 
+
+
+function normalizeInternationalPhone(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw.startsWith("+")) return null;
+  const digits = raw.replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
+}
+
+async function queueTelegramContactMatches(telegramUserId: number): Promise<{ jobs: number; candidates: number }> {
+  const ownerId = Deno.env.get("TELEGRAM_OWNER_USER_ID")?.trim();
+  if (!ownerId || String(telegramUserId) !== ownerId) throw new Error("telegram_resolver_owner_only");
+
+  const candidates: Array<{ device_id: string; local_contact_id: string; name?: string; phone: string }> = [];
+  const seen = new Set<string>();
+  const pageSize = 1000;
+  for (let offset = 0; ; offset += pageSize) {
+    const query = new URLSearchParams({
+      select: "device_id,local_contact_id,contact_data",
+      order: "id.asc",
+      limit: String(pageSize),
+      offset: String(offset),
+    });
+    const rows = await databaseRequest<Array<{
+      device_id: string; local_contact_id: string; contact_data: Record<string, unknown>;
+    }>>(`contact_bridge_snapshots?${query.toString()}`);
+    if (!rows.length) break;
+    for (const row of rows) {
+      const contact = row.contact_data && typeof row.contact_data === "object" ? row.contact_data : {};
+      const phones = Array.isArray(contact.phones) ? contact.phones : [];
+      for (const rawPhone of phones) {
+        const phone = normalizeInternationalPhone(rawPhone);
+        if (!phone) continue;
+        const key = `${row.device_id}:${row.local_contact_id}:${phone}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const status = String(contact.telegram_match_status ?? "");
+        const checkedPhone = String(contact.telegram_match_phone ?? "");
+        if (checkedPhone === phone && ["matched", "username_missing", "not_resolved"].includes(status)) continue;
+        if (!status && typeof contact.telegram_username === "string" &&
+            contact.telegram_username.trim() && contact.telegram_username !== "СКРЫТ") continue;
+        candidates.push({
+          device_id: row.device_id,
+          local_contact_id: row.local_contact_id,
+          name: typeof contact.name === "string" ? contact.name.slice(0, 80) : undefined,
+          phone,
+        });
+      }
+    }
+    if (rows.length < pageSize) break;
+  }
+
+  if (!candidates.length) return { jobs: 0, candidates: 0 };
+  let jobs = 0;
+  for (let offset = 0; offset < candidates.length; offset += 500) {
+    await databaseRequest("telegram_match_jobs", "POST", [{
+      status: "queued",
+      phones: candidates.slice(offset, offset + 500),
+      requested_by_telegram_user_id: telegramUserId,
+    }]);
+    jobs++;
+  }
+  return { jobs, candidates: candidates.length };
+}
+
+async function listTelegramMatchJobs(telegramUserId: number): Promise<Array<{
+  id: string; status: string; checked: number; matched: number; errors: number;
+  phones: unknown[]; created_at: string; error_message?: string | null;
+}>> {
+  const ownerId = Deno.env.get("TELEGRAM_OWNER_USER_ID")?.trim();
+  if (!ownerId || String(telegramUserId) !== ownerId) throw new Error("telegram_resolver_owner_only");
+  const query = new URLSearchParams({
+    select: "id,status,checked,matched,errors,phones,created_at,error_message",
+    requested_by_telegram_user_id: `eq.${telegramUserId}`,
+    order: "created_at.desc",
+    limit: "5",
+  });
+  return await databaseRequest(`telegram_match_jobs?${query.toString()}`);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "GET") {
     const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
@@ -416,7 +497,7 @@ Deno.serve(async (req: Request) => {
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
     case "help":
-      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сохранённый сценарий в очередь\n/scenarios — список готовых сценариев\n/scenario <имя> — запустить сценарий\n/point <имя> <x> <y> — откалибровать точку\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа";
+      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сохранённый сценарий в очередь\n/scenarios — список готовых сценариев\n/scenario <имя> — запустить сценарий\n/point <имя> <x> <y> — откалибровать точку\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа\n/telegram_match — проверить номера контактов через серверную MTProto-сессию (только владелец)\n/telegram_status — состояние проверки контактов";
       break;
     case "settings": {
       if (telegramUserId === undefined || !serviceKey()) {
@@ -556,6 +637,45 @@ Deno.serve(async (req: Request) => {
       } catch (error) {
         console.error("worker registration failed", error instanceof Error ? error.message : "unknown");
         reply = "Не удалось зарегистрировать исполнителя. Проверь состояние базы и повтори попытку.";
+      }
+      break;
+    }
+
+    case "telegram_match": {
+      if (telegramUserId === undefined || chatId !== telegramUserId) {
+        reply = "Команда доступна только в личном чате.";
+        break;
+      }
+      try {
+        const queued = await queueTelegramContactMatches(telegramUserId);
+        reply = queued.candidates
+          ? `В очередь поставлено номеров: ${queued.candidates}. Заданий: ${queued.jobs}. Сервер проверяет по одному номеру с интервалом не менее 5 секунд. Основной телефон может быть выключен. FloodWait автоматически приостанавливает очередь.`
+          : "Новых номеров для проверки нет: все доступные номера уже проверены или имеют сохранённый Telegram username.";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply = message === "telegram_resolver_owner_only"
+          ? "Доступ запрещён: команда проверки доступна только владельцу, указанному в TELEGRAM_OWNER_USER_ID."
+          : "Не удалось поставить проверку в очередь. Проверь миграцию Telegram resolver и серверные права Supabase.";
+      }
+      break;
+    }
+    case "telegram_status": {
+      if (telegramUserId === undefined || chatId !== telegramUserId) {
+        reply = "Команда доступна только в личном чате.";
+        break;
+      }
+      try {
+        const jobs = await listTelegramMatchJobs(telegramUserId);
+        reply = jobs.length
+          ? "Последние задания проверки Telegram:\\n" + jobs.map(job =>
+              `• ${job.status}: ${job.checked}/${Array.isArray(job.phones) ? job.phones.length : 0}; найдено ${job.matched}; ошибок ${job.errors}; ID ${job.id.slice(0, 8)}${job.error_message ? `\\n  ${job.error_message.slice(0, 120)}` : ""}`
+            ).join("\\n")
+          : "Заданий проверки Telegram пока нет. Запусти /telegram_match.";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply = message === "telegram_resolver_owner_only"
+          ? "Доступ запрещён: команда доступна только владельцу."
+          : "Не удалось прочитать состояние очереди Telegram.";
       }
       break;
     }
