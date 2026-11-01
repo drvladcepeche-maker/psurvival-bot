@@ -74,6 +74,34 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 - Configure a routine in a private Telegram chat with `/set daily_steps [{"type":"launch_app","package_name":"com.global.ztmslg"},{"type":"wait","duration_ms":3000}]`. Supported step types are `launch_app`, `wait`, `back`, `tap_text`, `tap_description`, and `tap_coordinates`. Screen-specific actions must be tuned to the actual game UI.
 - Supabase Edge Functions are short-lived request handlers, not a persistent Android emulator or 24/7 gameplay host.
 
+
+## Sherlock username search integration
+
+The bot includes a separate Sherlock queue and Python worker. It checks public profile URLs for submitted usernames; it does not identify account owners or access private profiles.
+
+Telegram commands (private chat):
+- `/sherlock <username>` — enqueue a username search. Up to five usernames may be supplied, separated by spaces.
+- `/sherlock_status` — show the latest five search jobs.
+- `/sherlock_history` — show the latest ten jobs.
+
+The search queue is isolated in `public.sherlock_jobs`; it does not use the Android game-worker queue or the contacts resolver. Jobs are idempotent per Telegram update. The worker omits NSFW sites by default and preserves inconclusive/WAF outcomes separately from found profiles.
+
+### Supabase migration
+
+Apply `supabase/migrations/20261101010000_sherlock_search_queue.sql` to project `xevqbgjtxuveeqaiacvm` before deploying the updated Telegram Edge Function.
+
+### Python worker deployment
+
+The worker runs as a scheduled GitHub Actions job; a separate paid hosting service is not required.
+
+- `.github/workflows/sherlock-worker.yml` starts the queue worker every five minutes and also supports manual dispatch.
+- The worker installs the pinned `sherlock-project==0.16.2` package and processes queued jobs until the queue is empty.
+- `sherlock-worker-gateway` is a Supabase Edge Function that accepts only GitHub Actions OIDC tokens from this repository and the approved branches.
+- The gateway uses the Supabase service-role key and Telegram bot token stored as Supabase secrets. Neither secret is exposed to GitHub Actions or committed to the repository.
+- The GitHub Actions workflow requires `id-token: write`; do not add a service-role key or bot token to GitHub repository variables or source files.
+
+The gateway is deployed to project `xevqbgjtxuveeqaiacvm`. The scheduled worker becomes active on the default branch after this change is merged. A push to the integration branch also starts a worker run for validation. The workflow uses a public GitHub-hosted runner, so no payment card or phone number is needed for a separate worker host.
+
 ## Safety
 
 Keep secrets out of source control. Do not use this prototype to bypass game protections or anti-cheat systems.
@@ -85,3 +113,5 @@ Keep secrets out of source control. Do not use this prototype to bypass game pro
 - [Integration test matrix](docs/integration-test-matrix.md) — end-to-end checks for Telegram, Supabase queue, Android worker and game launch.
 
 These documents do not claim that a physical-device test has already passed. The current worker executes UI steps but cannot semantically verify game state or reliably infer screens from visual content.
+
+Each worker invocation drains the current queue before exiting; Telegram webhook requests only enqueue jobs and never wait for a Sherlock scan.
