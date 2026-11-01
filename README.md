@@ -92,14 +92,15 @@ Apply `supabase/migrations/20261101010000_sherlock_search_queue.sql` to project 
 
 ### Python worker deployment
 
-Build and run `sherlock-worker/Dockerfile` as a persistent worker process (not a request/response web service). Configure these environment variables in the worker host:
+The worker runs as a scheduled GitHub Actions job; a separate paid hosting service is not required.
 
-- `SUPABASE_URL` — project URL.
-- `SUPABASE_SERVICE_ROLE_KEY` — service-role key stored only as a worker secret; never put it in the Android app or Git.
-- `TELEGRAM_BOT_TOKEN` — bot token used to send completion notifications.
-- Optional: `SHERLOCK_WORKER_ID` (default `sherlock-python-1`), `POLL_SECONDS` (default 5), `SHERLOCK_TIMEOUT` (default 30), `SHERLOCK_MAX_SITES` (default 500).
+- `.github/workflows/sherlock-worker.yml` starts the queue worker every five minutes and also supports manual dispatch.
+- The worker installs the pinned `sherlock-project==0.16.2` package and processes queued jobs until the queue is empty.
+- `sherlock-worker-gateway` is a Supabase Edge Function that accepts only GitHub Actions OIDC tokens from this repository and the approved branches.
+- The gateway uses the Supabase service-role key and Telegram bot token stored as Supabase secrets. Neither secret is exposed to GitHub Actions or committed to the repository.
+- The GitHub Actions workflow requires `id-token: write`; do not add a service-role key or bot token to GitHub repository variables or source files.
 
-The worker installs the pinned `sherlock-project==0.16.2` package. The worker must remain running to consume queued jobs. Deploying the repository or applying the migration alone does not start the worker.
+The gateway is deployed to project `xevqbgjtxuveeqaiacvm`. The scheduled worker becomes active on the default branch after this change is merged. A push to the integration branch also starts a worker run for validation. The workflow uses a public GitHub-hosted runner, so no payment card or phone number is needed for a separate worker host.
 
 ## Safety
 
