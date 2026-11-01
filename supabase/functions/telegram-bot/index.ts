@@ -416,7 +416,7 @@ Deno.serve(async (req: Request) => {
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
     case "help":
-      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сохранённый сценарий в очередь\n/scenarios — список готовых сценариев\n/scenario <имя> — запустить сценарий\n/point <имя> <x> <y> — откалибровать точку\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа";
+      reply = "Команды бота:\n/start — проверить подключение\n/help — список команд\n/status — проверить облачный вебхук\n/settings — показать сохранённые настройки\n/set — изменить настройку\n/tasks — последние задания\n/daily — поставить сохранённый сценарий в очередь\n/scenarios — список готовых сценариев\n/scenario <имя> — запустить сценарий\n/point <имя> <x> <y> — откалибровать точку\n/register_worker — зарегистрировать Android-исполнитель\n/rotate_worker — перевыпустить токен исполнителя\n/about — возможности прототипа\\n/telegram_match — проверить номера контактов через серверную MTProto-сессию (только владелец)\\n/telegram_status — состояние проверки контактов";
       break;
     case "settings": {
       if (telegramUserId === undefined || !serviceKey()) {
@@ -556,6 +556,45 @@ Deno.serve(async (req: Request) => {
       } catch (error) {
         console.error("worker registration failed", error instanceof Error ? error.message : "unknown");
         reply = "Не удалось зарегистрировать исполнителя. Проверь состояние базы и повтори попытку.";
+      }
+      break;
+    }
+
+    case "telegram_match": {
+      if (telegramUserId === undefined || chatId !== telegramUserId) {
+        reply = "Команда доступна только в личном чате.";
+        break;
+      }
+      try {
+        const queued = await queueTelegramContactMatches(telegramUserId);
+        reply = queued.candidates
+          ? `В очередь поставлено номеров: ${queued.candidates}. Заданий: ${queued.jobs}. Сервер проверяет по одному номеру с интервалом не менее 5 секунд. Основной телефон может быть выключен. FloodWait автоматически приостанавливает очередь.`
+          : "Новых номеров для проверки нет: все доступные номера уже проверены или имеют сохранённый Telegram username.";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply = message === "telegram_resolver_owner_only"
+          ? "Доступ запрещён: команда проверки доступна только владельцу, указанному в TELEGRAM_OWNER_USER_ID."
+          : "Не удалось поставить проверку в очередь. Проверь миграцию Telegram resolver и серверные права Supabase.";
+      }
+      break;
+    }
+    case "telegram_status": {
+      if (telegramUserId === undefined || chatId !== telegramUserId) {
+        reply = "Команда доступна только в личном чате.";
+        break;
+      }
+      try {
+        const jobs = await listTelegramMatchJobs(telegramUserId);
+        reply = jobs.length
+          ? "Последние задания проверки Telegram:\\n" + jobs.map(job =>
+              `• ${job.status}: ${job.checked}/${Array.isArray(job.phones) ? job.phones.length : 0}; найдено ${job.matched}; ошибок ${job.errors}; ID ${job.id.slice(0, 8)}${job.error_message ? `\\n  ${job.error_message.slice(0, 120)}` : ""}`
+            ).join("\\n")
+          : "Заданий проверки Telegram пока нет. Запусти /telegram_match.";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply = message === "telegram_resolver_owner_only"
+          ? "Доступ запрещён: команда доступна только владельцу."
+          : "Не удалось прочитать состояние очереди Telegram.";
       }
       break;
     }
