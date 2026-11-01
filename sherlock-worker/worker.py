@@ -2,6 +2,7 @@ import json
 import os
 import time
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -78,7 +79,7 @@ def process(job: dict):
         site_data = {name: item.information for name, item in sites.sites.items()}
         if len(site_data) > MAX_SITES:
             site_data = dict(list(site_data.items())[:MAX_SITES])
-        patch_job(job_id, {"total_sites": len(site_data), "updated_at": "now()"})
+        patch_job(job_id, {"total_sites": len(site_data), "updated_at": datetime.now(timezone.utc).isoformat()})
         log.info("Starting %s across %s sites", username, len(site_data))
         results = sherlock(
             username=username,
@@ -109,8 +110,8 @@ def process(job: dict):
             "checked_sites": len(normalized),
             "found_count": len(found),
             "results": compact,
-            "finished_at": "now()",
-            "updated_at": "now()",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         })
         lines = [
             "Sherlock: проверка завершена",
@@ -130,8 +131,8 @@ def process(job: dict):
         patch_job(job_id, {
             "status": "failed",
             "error_message": str(exc)[:500],
-            "finished_at": "now()",
-            "updated_at": "now()",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         })
         telegram_send(chat_id, f"Sherlock: ошибка проверки {username}. Подробности доступны в /sherlock_history.")
 
