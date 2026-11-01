@@ -74,6 +74,33 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 - Configure a routine in a private Telegram chat with `/set daily_steps [{"type":"launch_app","package_name":"com.global.ztmslg"},{"type":"wait","duration_ms":3000}]`. Supported step types are `launch_app`, `wait`, `back`, `tap_text`, `tap_description`, and `tap_coordinates`. Screen-specific actions must be tuned to the actual game UI.
 - Supabase Edge Functions are short-lived request handlers, not a persistent Android emulator or 24/7 gameplay host.
 
+
+## Sherlock username search integration
+
+The bot includes a separate Sherlock queue and Python worker. It checks public profile URLs for submitted usernames; it does not identify account owners or access private profiles.
+
+Telegram commands (private chat):
+- `/sherlock <username>` — enqueue a username search. Up to five usernames may be supplied, separated by spaces.
+- `/sherlock_status` — show the latest five search jobs.
+- `/sherlock_history` — show the latest ten jobs.
+
+The search queue is isolated in `public.sherlock_jobs`; it does not use the Android game-worker queue or the contacts resolver. Jobs are idempotent per Telegram update. The worker omits NSFW sites by default and preserves inconclusive/WAF outcomes separately from found profiles.
+
+### Supabase migration
+
+Apply `supabase/migrations/20261101010000_sherlock_search_queue.sql` to project `xevqbgjtxuveeqaiacvm` before deploying the updated Telegram Edge Function.
+
+### Python worker deployment
+
+Build and run `sherlock-worker/Dockerfile` as a persistent worker process (not a request/response web service). Configure these environment variables in the worker host:
+
+- `SUPABASE_URL` — project URL.
+- `SUPABASE_SERVICE_ROLE_KEY` — service-role key stored only as a worker secret; never put it in the Android app or Git.
+- `TELEGRAM_BOT_TOKEN` — bot token used to send completion notifications.
+- Optional: `SHERLOCK_WORKER_ID` (default `sherlock-python-1`), `POLL_SECONDS` (default 5), `SHERLOCK_TIMEOUT` (default 30), `SHERLOCK_MAX_SITES` (default 500).
+
+The worker installs the pinned `sherlock-project==0.16.2` package. The worker must remain running to consume queued jobs. Deploying the repository or applying the migration alone does not start the worker.
+
 ## Safety
 
 Keep secrets out of source control. Do not use this prototype to bypass game protections or anti-cheat systems.
