@@ -493,6 +493,11 @@ Deno.serve(async (req: Request) => {
   const command = commandMatch?.[1]?.toLowerCase() ?? "";
   let reply: string;
   switch (command) {
+    case "myid":
+      reply = telegramUserId !== undefined && chatId === telegramUserId
+        ? `Ваш Telegram ID: ${telegramUserId}. Передавать его следует только для настройки TELEGRAM_OWNER_USER_ID.`
+        : "Команда доступна только в личном чате.";
+      break;
     case "start":
       reply = "Бот подключён. Это облачный прототип для Puzzles & Survival. Используй /help для списка команд.";
       break;
