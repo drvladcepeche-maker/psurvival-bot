@@ -26,7 +26,7 @@ The function is deployed separately from this repository; deploy this source whe
 Configure these as Edge Function secrets in the Supabase dashboard (do not commit real values):
 
 - `TELEGRAM_BOT_TOKEN` — token from @BotFather.
-- `TELEGRAM_WEBHOOK_SECRET` — random secret consisting only of A-Z, a-z, 0-9, underscore, or hyphen. Use at least 32 random characters.
+- `TELEGRAM_WEBHOOK_SECRET` — random secret consisting only of A-Z, a-z, 0-9, underscore, or hyphen. Use at least 32 random characters.\n- `TELEGRAM_OWNER_USER_ID` — numeric Telegram user ID allowed to start and inspect the server-side contacts resolver. This is mandatory; `/telegram_match` and `/telegram_status` are denied unless the caller matches this ID and uses a private chat.
 
 Never place real bot tokens or secrets in Git, issue reports, or chat messages.
 
@@ -57,7 +57,7 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 
 ## Current scope and limitations
 
-- Implemented commands: `/start`, `/help`, `/status`, `/settings`, `/tasks`, `/daily`, `/register_worker`, `/rotate_worker`, and `/about`.
+- Implemented commands: `/start`, `/help`, `/status`, `/settings`, `/tasks`, `/daily`, `/register_worker`, `/rotate_worker`, `/telegram_match`, `/telegram_status`, and `/about`.\n- `/telegram_match` is owner-only (configure `TELEGRAM_OWNER_USER_ID`), reads phone numbers from `contact_bridge_snapshots`, skips phone numbers already checked for the same contact, and enqueues batches in `telegram_match_jobs`. The main Android phone may be offline after its contacts have synced.\n- `/telegram_status` is owner-only and reports the latest resolver job progress. The separate Hostless MTProto worker performs the lookups and updates contact snapshots; deploy it from the `contacts` repository. The worker never imports numbers into Telegram contacts.
 - Telegram user profiles are persisted in `psurvival_bot_profiles`; settings storage is ready for additional user-configurable fields.
 - `/daily` enqueues a durable `daily_routine` job with an idempotency key, so Telegram retries do not create duplicate tasks. Configure `daily_steps` first; otherwise the executor marks the job as unconfigured rather than pretending it ran.
 - `/tasks` reads the most recent tasks from Supabase.
