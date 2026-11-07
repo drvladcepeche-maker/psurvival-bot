@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { inspectApk } from "./apk-inspect.mjs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -307,7 +307,7 @@ process.on("SIGTERM", () => { stopping = true; });
 
 while (!stopping) {
   try {
-    const response = await request({ action: "claim" });
+    const response = await request({ action: "claim", claim_token: randomUUID() });
     const job = response.job;
     if (!job) {
       await sleep(POLL_MS);
