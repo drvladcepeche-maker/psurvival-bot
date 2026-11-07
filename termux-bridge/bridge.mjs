@@ -305,9 +305,24 @@ console.log("No arbitrary shell command is accepted.");
 process.on("SIGINT", () => { stopping = true; });
 process.on("SIGTERM", () => { stopping = true; });
 
+let pendingClaimToken = null;
+let pendingCompletion = null;
+
 while (!stopping) {
   try {
-    const response = await request({ action: "claim", claim_token: randomUUID() });
+    // Replay an identical completion after a lost response; the server accepts exact replays.
+    if (pendingCompletion) {
+      await request(pendingCompletion);
+      console.log(`Finished ${pendingCompletion.job_id} after retry`);
+      pendingCompletion = null;
+      continue;
+    }
+
+    // Keep the same token if a claim response is lost, so the server returns the same job.
+    if (!pendingClaimToken) pendingClaimToken = randomUUID();
+    const response = await request({ action: "claim", claim_token: pendingClaimToken });
+    pendingClaimToken = null;
+
     const job = response.job;
     if (!job) {
       await sleep(POLL_MS);
@@ -320,14 +335,16 @@ while (!stopping) {
     } catch (error) {
       result = { exitCode: 1, output: "", errorText: String(error?.message || error).slice(0, 8000) };
     }
-    await request({
+    pendingCompletion = {
       action: "complete",
       job_id: job.id,
       output: String(result.output || "").slice(0, MAX_OUTPUT),
       error_text: String(result.errorText || "").slice(0, 8000),
       exit_code: Number.isInteger(result.exitCode) ? result.exitCode : 1,
-    });
+    };
+    await request(pendingCompletion);
     console.log(`Finished ${job.id} with exit code ${result.exitCode}`);
+    pendingCompletion = null;
   } catch (error) {
     console.error("Bridge cycle failed:", String(error?.message || error));
     await sleep(POLL_MS);
