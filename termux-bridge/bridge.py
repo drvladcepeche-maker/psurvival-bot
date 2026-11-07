@@ -73,19 +73,35 @@ def run_job(job):
 
 def main():
     token = load_config()
+    pending_claim_token = None
+    pending_completion = None
     print("Termux bridge connected. Allowed commands only; Ctrl+C stops the worker.")
     while True:
         try:
-            result = request(token, {"action": "claim", "claim_token": str(uuid.uuid4())})
+            # Replay an identical completion after a lost response; the server accepts exact replays.
+            if pending_completion is not None:
+                request(token, pending_completion)
+                print("Finished job", pending_completion["job_id"], "after retry", flush=True)
+                pending_completion = None
+                continue
+
+            # Keep the same token if the claim request fails after reaching the server.
+            if pending_claim_token is None:
+                pending_claim_token = str(uuid.uuid4())
+            result = request(token, {"action": "claim", "claim_token": pending_claim_token})
+            pending_claim_token = None
+
             job = result.get("job")
             if not job:
                 time.sleep(POLL_SECONDS)
                 continue
             print("Running job", job.get("id"), job.get("command_type"), flush=True)
             code, output, error = run_job(job)
-            request(token, {"action": "complete", "job_id": job["id"],
-                "exit_code": code, "output": output, "error_text": error})
+            pending_completion = {"action": "complete", "job_id": job["id"],
+                "exit_code": code, "output": output, "error_text": error}
+            request(token, pending_completion)
             print("Finished job", job.get("id"), "exit", code, flush=True)
+            pending_completion = None
         except KeyboardInterrupt:
             print("\nStopped.")
             break
