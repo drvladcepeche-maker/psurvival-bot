@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Restricted Termux command bridge. Executes only fixed, allow-listed project commands."""
-import json, os, pathlib, subprocess, time, urllib.request, urllib.error
+import json, os, pathlib, subprocess, time, uuid, urllib.request, urllib.error
 
 API = "https://xevqbgjtxuveeqaiacvm.supabase.co/functions/v1/termux-bridge"
 BASE = pathlib.Path.home() / "psurvival-bot"
@@ -76,7 +76,7 @@ def main():
     print("Termux bridge connected. Allowed commands only; Ctrl+C stops the worker.")
     while True:
         try:
-            result = request(token, {"action": "claim"})
+            result = request(token, {"action": "claim", "claim_token": str(uuid.uuid4())})
             job = result.get("job")
             if not job:
                 time.sleep(POLL_SECONDS)
