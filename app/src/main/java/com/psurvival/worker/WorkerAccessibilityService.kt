@@ -12,10 +12,12 @@ import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.FrameLayout
 import android.widget.TextView
 import org.json.JSONArray
@@ -36,7 +38,18 @@ class WorkerAccessibilityService : AccessibilityService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var activeJobId: String? = null
     @Volatile private var lastHeartbeatAt = 0L
+    @Volatile private var lastGameAccessibilityEventAt = 0L
+    @Volatile private var lastGameAccessibilityEventType = 0
+    @Volatile private var lastGameAccessibilityEventPackage = ""
     private val capturedUiSnapshots = mutableListOf<JSONObject>()
+
+    private data class ForegroundWindowCandidate(
+        val root: AccessibilityNodeInfo,
+        val packageName: String,
+        val focused: Boolean,
+        val active: Boolean,
+        val layer: Int,
+    )
     private val recordingLock = Any()
 
     private var recordingRoot: FrameLayout? = null
@@ -89,11 +102,16 @@ class WorkerAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
         if (event == null) return
         val prefs = getSharedPreferences("worker", MODE_PRIVATE)
-        if (!prefs.getBoolean("record_game_actions", false)) return
-        val selectedPackage = prefs.getString("selected_game_package", "com.global.ztmslg")
-            .orEmpty().ifBlank { "com.global.ztmslg" }
+        val selectedPackage = selectedGamePackage()
         val activePackage = event.packageName?.toString().orEmpty()
         if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") return
+
+        // Track game UI events even when recording is off; these timestamps drive
+        // bounded post-action settling checks without collecting unrelated app events.
+        lastGameAccessibilityEventAt = SystemClock.uptimeMillis()
+        lastGameAccessibilityEventType = event.eventType
+        lastGameAccessibilityEventPackage = activePackage
+        if (!prefs.getBoolean("record_game_actions", false)) return
 
         synchronized(recordingLock) {
             val total = prefs.getLong("record_diag_total", 0L) + 1L
@@ -379,7 +397,10 @@ class WorkerAccessibilityService : AccessibilityService() {
     }
 
     private fun executeStep(step: JSONObject) {
-        when (step.optString("type")) {
+        val stepType = step.optString("type")
+        val verifyAfter = step.optBoolean("verify_after", false)
+        val eventBefore = lastGameAccessibilityEventAt
+        when (stepType) {
             "wait" -> {
                 val millis = step.optLong("duration_ms", 1000L).coerceIn(250L, 10_000L)
                 Thread.sleep(millis)
@@ -398,6 +419,20 @@ class WorkerAccessibilityService : AccessibilityService() {
                 if (needle.isEmpty() || !tapMatchingNode(needle, true)) {
                     throw IllegalStateException("Не найдено описание: $needle")
                 }
+            }
+            "wait_for_text" -> {
+                waitForGameNode(
+                    step.optString("text"),
+                    false,
+                    step.optLong("timeout_ms", 10_000L),
+                )
+            }
+            "wait_for_description" -> {
+                waitForGameNode(
+                    step.optString("description"),
+                    true,
+                    step.optLong("timeout_ms", 10_000L),
+                )
             }
             "tap_coordinates" -> {
                 val x = step.optInt("x", -1)
@@ -449,22 +484,211 @@ class WorkerAccessibilityService : AccessibilityService() {
                 ) selectedGamePackage else requestedPackage
                 val launch = packageManager.getLaunchIntentForPackage(packageName)
                     ?: throw IllegalStateException("Приложение не найдено: $packageName")
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                launch.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
+                )
                 startActivity(launch)
+                waitForForegroundPackage(
+                    packageName,
+                    step.optLong("timeout_ms", 5_000L),
+                )
             }
             "capture_ui" -> capturedUiSnapshots.add(captureGameUiSnapshot())
-            else -> throw IllegalArgumentException("Неизвестный тип шага: ${step.optString("type")}")
+            else -> throw IllegalArgumentException("Неизвестный тип шага: ${stepType}")
+        }
+
+        if (
+            verifyAfter &&
+            stepType in setOf(
+                "back",
+                "tap_text",
+                "tap_description",
+                "tap_coordinates",
+                "tap_relative",
+                "tap_point",
+                "swipe",
+            )
+        ) {
+            val settling = waitForUiSettled(
+                eventBefore,
+                step.optLong("verify_timeout_ms", 2_500L),
+            )
+            val snapshot = runCatching { captureGameUiSnapshot() }
+                .getOrElse { error ->
+                    JSONObject()
+                        .put("package_name", foregroundPackage())
+                        .put("capture_error", (error.message ?: "UI snapshot unavailable").take(240))
+                }
+            snapshot.put("post_action_verification", settling)
+            capturedUiSnapshots.add(snapshot)
+        }
+    }
+
+    private fun selectedGamePackage(): String {
+        return getSharedPreferences("worker", MODE_PRIVATE)
+            .getString("selected_game_package", "com.global.ztmslg")
+            .orEmpty()
+            .ifBlank { "com.global.ztmslg" }
+    }
+
+    /**
+     * Opposable-inspired foreground selection:
+     * focused application window first, then the highest application layer.
+     * A background game window is never treated as the foreground app.
+     */
+    private fun foregroundApplicationWindow(): ForegroundWindowCandidate? {
+        val appWindows = runCatching { windows }
+            .getOrDefault(emptyList<AccessibilityWindowInfo>())
+        val candidates = appWindows.mapNotNull { window ->
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
+            val root = runCatching { window.root }.getOrNull() ?: return@mapNotNull null
+            val packageName = root.packageName?.toString().orEmpty()
+            if (packageName.isBlank()) {
+                root.recycle()
+                return@mapNotNull null
+            }
+            ForegroundWindowCandidate(
+                root = root,
+                packageName = packageName,
+                focused = window.isFocused,
+                active = window.isActive,
+                layer = window.layer,
+            )
+        }
+
+        val selected = candidates.firstOrNull { it.focused }
+            ?: candidates.maxByOrNull { it.layer }
+            ?: candidates.firstOrNull { it.active }
+        candidates.filter { it !== selected }.forEach { candidate ->
+            runCatching { candidate.root.recycle() }
+        }
+        return selected
+    }
+
+    private fun foregroundPackage(): String {
+        val candidate = foregroundApplicationWindow()
+        if (candidate != null) {
+            val packageName = candidate.packageName
+            candidate.root.recycle()
+            return packageName
+        }
+        val fallback = rootInActiveWindow ?: return ""
+        val packageName = fallback.packageName?.toString().orEmpty()
+        fallback.recycle()
+        return packageName
+    }
+
+    private fun waitForForegroundPackage(expectedPackage: String, timeoutMs: Long) {
+        val timeout = timeoutMs.coerceIn(1_000L, 15_000L)
+        val deadline = SystemClock.uptimeMillis() + timeout
+        var diagnostics = "no application window"
+        while (SystemClock.uptimeMillis() < deadline) {
+            val candidate = foregroundApplicationWindow()
+            if (candidate != null) {
+                diagnostics = "${candidate.packageName} (focused=${candidate.focused}, layer=${candidate.layer}, active=${candidate.active})"
+                val matched = candidate.packageName == expectedPackage
+                candidate.root.recycle()
+                if (matched) return
+            } else {
+                val fallback = rootInActiveWindow
+                if (fallback != null) {
+                    val packageName = fallback.packageName?.toString().orEmpty()
+                    diagnostics = packageName.ifBlank { "unknown active root" }
+                    fallback.recycle()
+                    if (packageName == expectedPackage) return
+                }
+            }
+            Thread.sleep(250L)
+        }
+        throw IllegalStateException(
+            "Не дождался активного окна $expectedPackage за ${timeout} мс; текущее окно: $diagnostics",
+        )
+    }
+
+    private fun waitForGameNode(needleValue: String, description: Boolean, timeoutMs: Long) {
+        val needle = needleValue.trim()
+        if (needle.isEmpty()) {
+            throw IllegalArgumentException(
+                if (description) "description обязателен" else "text обязателен",
+            )
+        }
+        val timeout = timeoutMs.coerceIn(500L, 30_000L)
+        val deadline = SystemClock.uptimeMillis() + timeout
+        var lastPackage = ""
+        while (SystemClock.uptimeMillis() < deadline) {
+            val candidate = foregroundApplicationWindow()
+            val root = candidate?.root ?: if (candidate == null) rootInActiveWindow else null
+            if (root != null) {
+                val packageName = candidate?.packageName ?: root.packageName?.toString().orEmpty()
+                lastPackage = packageName
+                if (packageName == selectedGamePackage() || packageName == "com.global.ztmslg") {
+                    val found = findNode(root, needle, description)
+                    if (found != null) {
+                        if (found !== root) runCatching { found.recycle() }
+                        root.recycle()
+                        return
+                    }
+                }
+                root.recycle()
+            }
+            Thread.sleep(250L)
+        }
+        val kind = if (description) "contentDescription" else "text"
+        throw IllegalStateException(
+            "Не дождался $kind «$needle» за ${timeout} мс; активное приложение: ${lastPackage.ifBlank { "не определено" }}",
+        )
+    }
+
+    /**
+     * Waits for game Accessibility events to become quiet after a dispatched action.
+     * This confirms UI activity/settling, not the semantic success of a game action.
+     */
+    private fun waitForUiSettled(eventBefore: Long, timeoutMs: Long): JSONObject {
+        val timeout = timeoutMs.coerceIn(500L, 10_000L)
+        val started = SystemClock.uptimeMillis()
+        while (true) {
+            val now = SystemClock.uptimeMillis()
+            val eventAt = lastGameAccessibilityEventAt
+            if (eventAt > eventBefore) {
+                val quietFor = now - eventAt
+                if (quietFor >= 350L) {
+                    return JSONObject()
+                        .put("ui_settled", true)
+                        .put("event_seen", true)
+                        .put("quiet_ms", quietFor)
+                        .put("last_event_type", lastGameAccessibilityEventType)
+                        .put("event_package", lastGameAccessibilityEventPackage)
+                        .put("method", "accessibility_event_quiet")
+                }
+            } else if (now - started >= 700L) {
+                return JSONObject()
+                    .put("ui_settled", false)
+                    .put("event_seen", false)
+                    .put("reason", "no_game_accessibility_event")
+                    .put("waited_ms", now - started)
+                    .put("method", "accessibility_event")
+            }
+            if (now - started >= timeout) {
+                return JSONObject()
+                    .put("ui_settled", false)
+                    .put("event_seen", eventAt > eventBefore)
+                    .put("reason", "settle_timeout")
+                    .put("waited_ms", now - started)
+                    .put("method", "accessibility_event")
+            }
+            Thread.sleep(50L)
         }
     }
 
     private fun captureGameUiSnapshot(): JSONObject {
-        val root = rootInActiveWindow ?: throw IllegalStateException("Нет активного окна для capture_ui")
-        val activePackage = root.packageName?.toString().orEmpty()
-        val prefs = getSharedPreferences("worker", MODE_PRIVATE)
-        val selectedPackage = prefs.getString("selected_game_package", "com.global.ztmslg")
-            .orEmpty().ifBlank { "com.global.ztmslg" }
+        val candidate = foregroundApplicationWindow()
+        val root = candidate?.root ?: if (candidate == null) rootInActiveWindow else null
+            ?: throw IllegalStateException("Нет доступного application window для capture_ui")
+        val activePackage = candidate?.packageName ?: root.packageName?.toString().orEmpty()
+        val selectedPackage = selectedGamePackage()
         if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") {
-            throw IllegalStateException("capture_ui заблокирован вне игры: $activePackage")
+            root.recycle()
+            throw IllegalStateException("capture_ui заблокирован: foreground app=$activePackage, ожидалась игра=$selectedPackage")
         }
         val labels = JSONArray()
         var visited = 0
@@ -489,24 +713,41 @@ class WorkerAccessibilityService : AccessibilityService() {
                 walk(child)
             }
         }
-        walk(root)
-        return JSONObject()
-            .put("package_name", activePackage)
-            .put("captured_at_ms", System.currentTimeMillis())
-            .put("node_count", visited)
-            .put("labels", labels)
-            .put("note", if (labels.length() == 0) "No accessible labels; Unity-rendered UI may not expose text nodes." else "")
+        try {
+            walk(root)
+            return JSONObject()
+                .put("package_name", activePackage)
+                .put("captured_at_ms", System.currentTimeMillis())
+                .put("node_count", visited)
+                .put("labels", labels)
+                .put("window_focused", candidate?.focused ?: true)
+                .put("window_active", candidate?.active ?: true)
+                .put("window_layer", candidate?.layer ?: -1)
+                .put("note", if (labels.length() == 0) "No accessible labels; Unity-rendered UI may not expose text nodes." else "")
+        } finally {
+            root.recycle()
+        }
     }
 
     private fun tapMatchingNode(needle: String, description: Boolean): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val target = findNode(root, needle, description) ?: return false
-        var node: AccessibilityNodeInfo? = target
-        while (node != null) {
-            if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
-            node = node.parent
+        val candidate = foregroundApplicationWindow()
+        val root = candidate?.root ?: if (candidate == null) rootInActiveWindow else null ?: return false
+        val activePackage = candidate?.packageName ?: root.packageName?.toString().orEmpty()
+        if (activePackage != selectedGamePackage() && activePackage != "com.global.ztmslg") {
+            root.recycle()
+            return false
         }
-        return target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        try {
+            val target = findNode(root, needle, description) ?: return false
+            var node: AccessibilityNodeInfo? = target
+            while (node != null) {
+                if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+                node = node.parent
+            }
+            return target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } finally {
+            root.recycle()
+        }
     }
 
     private fun findNode(node: AccessibilityNodeInfo, needle: String, description: Boolean): AccessibilityNodeInfo? {
