@@ -64,6 +64,7 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 - `/register_worker` issues a private-chat worker token; `/rotate_worker` invalidates the previous token by replacing its hash.
 - Queue schema: `psurvival_bot_jobs`; executor registry: `psurvival_bot_devices`; event log: `psurvival_bot_job_events`.
 - The worker API supports authenticated `claim`, `heartbeat`, `complete`, and `fail` operations with leases and retry scheduling.
+- Each Termux bridge claim includes a fresh UUID `claim_token`; the database uses it to make claim retries idempotent. The Python and Node clients must send this field to match the deployed `termux-bridge` function.
 - Job claims are scoped to the Telegram user who owns the worker.
 - Telegram send failures are checked against both HTTP status and the Bot API JSON `ok` field; failures return HTTP 502 so Telegram can retry delivery.
 - A GET request to the function endpoint returns a basic health/configuration response.
