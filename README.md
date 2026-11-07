@@ -79,6 +79,10 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 Keep secrets out of source control. Do not use this prototype to bypass game protections or anti-cheat systems.
 
 
+## Opposable-inspired UI verification
+
+The Android worker now has focus-aware application-window discovery, bounded foreground checks after app launch, optional post-action UI settling/snapshots, and bounded waits for visible text or descriptions. The design is intentionally restricted to the selected game package. Details and limitations: [docs/opposable-ui-verification.md](docs/opposable-ui-verification.md).
+
 ## Game scenario research and integration verification
 
 - [Gameplay scenario catalogue](docs/gameplay-scenarios.md) — source-backed player workflows and conservative UI templates; exact labels must be checked on the current game build.
