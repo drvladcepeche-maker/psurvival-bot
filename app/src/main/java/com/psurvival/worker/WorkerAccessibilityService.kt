@@ -682,7 +682,8 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     private fun captureGameUiSnapshot(): JSONObject {
         val candidate = foregroundApplicationWindow()
-        val root = candidate?.root ?: if (candidate == null) rootInActiveWindow else null
+        val root = candidate?.root
+            ?: (if (candidate == null) rootInActiveWindow else null)
             ?: throw IllegalStateException("Нет доступного application window для capture_ui")
         val activePackage = candidate?.packageName ?: root.packageName?.toString().orEmpty()
         val selectedPackage = selectedGamePackage()
@@ -731,7 +732,9 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     private fun tapMatchingNode(needle: String, description: Boolean): Boolean {
         val candidate = foregroundApplicationWindow()
-        val root = candidate?.root ?: if (candidate == null) rootInActiveWindow else null ?: return false
+        val root = candidate?.root
+            ?: (if (candidate == null) rootInActiveWindow else null)
+            ?: return false
         val activePackage = candidate?.packageName ?: root.packageName?.toString().orEmpty()
         if (activePackage != selectedGamePackage() && activePackage != "com.global.ztmslg") {
             root.recycle()
