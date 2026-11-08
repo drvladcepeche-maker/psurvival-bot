@@ -4,6 +4,13 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
+import android.graphics.Bitmap
+import android.view.Display
+import android.os.Build
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityNodeInfo
@@ -15,10 +22,12 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class WorkerAccessibilityService : AccessibilityService() {
     private val executor = Executors.newScheduledThreadPool(2)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val textRecognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     @Volatile private var activeJobId: String? = null
     @Volatile private var lastHeartbeatAt = 0L
     private val capturedUiSnapshots = mutableListOf<JSONObject>()
@@ -93,6 +102,7 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         executor.shutdownNow()
+        runCatching { textRecognizer.close() }
         super.onDestroy()
     }
 
@@ -233,6 +243,10 @@ class WorkerAccessibilityService : AccessibilityService() {
      * Captures only visible, non-editable accessibility labels from the selected game window.
      * Avoids screenshots, input fields, account credentials, and unrelated apps.
      */
+    /**
+     * Captures visible game accessibility labels and performs on-device OCR on a screenshot.
+     * The bitmap is processed in memory only; no screenshot file is written to disk.
+     */
     private fun captureGameUiSnapshot(): JSONObject {
         val root = rootInActiveWindow ?: throw IllegalStateException("Нет активного окна для capture_ui")
         val activePackage = root.packageName?.toString().orEmpty()
@@ -240,39 +254,138 @@ class WorkerAccessibilityService : AccessibilityService() {
         val selectedPackage = prefs.getString("selected_game_package", "com.global.ztmslg")
             .orEmpty().ifBlank { "com.global.ztmslg" }
         if (activePackage != selectedPackage && activePackage != "com.global.ztmslg") {
+            root.recycle()
             throw IllegalStateException("capture_ui заблокирован вне игры: $activePackage")
         }
 
         val labels = JSONArray()
         var visited = 0
-        fun walk(node: AccessibilityNodeInfo) {
-            if (visited >= 100 || labels.length() >= 60) return
-            visited++
-            val className = node.className?.toString().orEmpty()
-            val isEditable = node.isEditable || className.contains("EditText", ignoreCase = true)
-            if (!isEditable) {
-                val text = node.text?.toString()?.trim().orEmpty().take(120)
-                val description = node.contentDescription?.toString()?.trim().orEmpty().take(120)
-                if (text.isNotEmpty() || description.isNotEmpty()) {
-                    val item = JSONObject().put("clickable", node.isClickable)
-                    if (text.isNotEmpty()) item.put("text", text)
-                    if (description.isNotEmpty()) item.put("description", description)
-                    labels.put(item)
+        try {
+            fun walk(node: AccessibilityNodeInfo) {
+                if (visited >= 100 || labels.length() >= 60) return
+                visited++
+                val className = node.className?.toString().orEmpty()
+                val isEditable = node.isEditable || className.contains("EditText", ignoreCase = true)
+                if (!isEditable) {
+                    val text = node.text?.toString()?.trim().orEmpty().take(120)
+                    val description = node.contentDescription?.toString()?.trim().orEmpty().take(120)
+                    if (text.isNotEmpty() || description.isNotEmpty()) {
+                        val item = JSONObject().put("clickable", node.isClickable)
+                        if (text.isNotEmpty()) item.put("text", text)
+                        if (description.isNotEmpty()) item.put("description", description)
+                        labels.put(item)
+                    }
+                }
+                for (i in 0 until node.childCount) {
+                    if (visited >= 100 || labels.length() >= 60) break
+                    val child = node.getChild(i) ?: continue
+                    walk(child)
                 }
             }
-            for (i in 0 until node.childCount) {
-                if (visited >= 100 || labels.length() >= 60) break
-                val child = node.getChild(i) ?: continue
-                walk(child)
+            walk(root)
+        } finally {
+            root.recycle()
+        }
+
+        val ocr = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            JSONObject()
+                .put("status", "unsupported")
+                .put("reason", "screen_capture_requires_android_11_api_30")
+        } else {
+            runCatching {
+                val bitmap = captureGameScreenshot()
+                try {
+                    recognizeScreenshot(bitmap)
+                } finally {
+                    bitmap.recycle()
+                }
+            }.getOrElse { error ->
+                JSONObject()
+                    .put("status", "failed")
+                    .put("error", (error.message ?: "Screenshot OCR failed").take(240))
             }
         }
-        walk(root)
+
         return JSONObject()
             .put("package_name", activePackage)
             .put("captured_at_ms", System.currentTimeMillis())
             .put("node_count", visited)
             .put("labels", labels)
-            .put("note", if (labels.length() == 0) "No accessible labels; Unity-rendered UI may not expose text nodes." else "")
+            .put("screenshot_ocr", ocr)
+            .put("note", if (labels.length() == 0 && ocr.optString("status") != "ok") {
+                "No accessibility labels and screenshot OCR unavailable; Unity-rendered UI may not be readable."
+            } else "")
+    }
+
+    @android.annotation.TargetApi(30)
+    private fun captureGameScreenshot(): Bitmap {
+        val latch = CountDownLatch(1)
+        val result = AtomicReference<Bitmap?>(null)
+        val failure = AtomicReference<String?>(null)
+
+        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+            override fun onSuccess(screenshot: ScreenshotResult) {
+                try {
+                    val hardwareBuffer = screenshot.hardwareBuffer
+                    val hardwareBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, screenshot.colorSpace)
+                    if (hardwareBitmap == null) {
+                        failure.set("Не удалось преобразовать screenshot HardwareBuffer в Bitmap")
+                    } else {
+                        result.set(hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false))
+                        hardwareBitmap.recycle()
+                    }
+                    hardwareBuffer.close()
+                } catch (error: Throwable) {
+                    failure.set(error.message ?: "Screenshot conversion failed")
+                } finally {
+                    latch.countDown()
+                }
+            }
+
+            override fun onFailure(errorCode: Int) {
+                failure.set("takeScreenshot error=$errorCode")
+                latch.countDown()
+            }
+        })
+
+        if (!latch.await(12, TimeUnit.SECONDS)) {
+            throw IllegalStateException("Тайм-аут получения снимка экрана")
+        }
+        return result.get() ?: throw IllegalStateException(failure.get() ?: "Screenshot bitmap is empty")
+    }
+
+    private fun recognizeScreenshot(bitmap: Bitmap): JSONObject {
+        val inputImage = InputImage.fromBitmap(bitmap, 0)
+        val visionText = Tasks.await(textRecognizer.process(inputImage), 15, TimeUnit.SECONDS)
+        val lines = JSONArray()
+        val width = bitmap.width.coerceAtLeast(1)
+        val height = bitmap.height.coerceAtLeast(1)
+
+        for (block in visionText.textBlocks) {
+            for (line in block.lines) {
+                val bounds = line.boundingBox ?: continue
+                val item = JSONObject()
+                    .put("text", line.text.take(160))
+                    .put("bounds", JSONObject()
+                        .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
+                        .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
+                        .put("right", (bounds.right * 10000 / width).coerceIn(0, 10000))
+                        .put("bottom", (bounds.bottom * 10000 / height).coerceIn(0, 10000)))
+                if (line.confidence >= 0f) item.put("confidence", line.confidence.toDouble())
+                lines.put(item)
+                if (lines.length() >= 250) break
+            }
+            if (lines.length() >= 250) break
+        }
+
+        return JSONObject()
+            .put("status", "ok")
+            .put("engine", "google_ml_kit_text_recognition_v2")
+            .put("processed_on_device", true)
+            .put("image_width", width)
+            .put("image_height", height)
+            .put("text", visionText.text.take(12000))
+            .put("lines", lines)
     }
 
     private fun tapMatchingNode(needle: String, description: Boolean): Boolean {
