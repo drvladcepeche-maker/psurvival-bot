@@ -327,14 +327,17 @@ class WorkerAccessibilityService : AccessibilityService() {
             override fun onSuccess(screenshot: ScreenshotResult) {
                 try {
                     val hardwareBuffer = screenshot.hardwareBuffer
-                    val hardwareBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, screenshot.colorSpace)
-                    if (hardwareBitmap == null) {
-                        failure.set("Не удалось преобразовать screenshot HardwareBuffer в Bitmap")
-                    } else {
-                        result.set(hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false))
-                        hardwareBitmap.recycle()
+                    try {
+                        val hardwareBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, screenshot.colorSpace)
+                        if (hardwareBitmap == null) {
+                            failure.set("Не удалось преобразовать screenshot HardwareBuffer в Bitmap")
+                        } else {
+                            result.set(hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false))
+                            hardwareBitmap.recycle()
+                        }
+                    } finally {
+                        hardwareBuffer.close()
                     }
-                    hardwareBuffer.close()
                 } catch (error: Throwable) {
                     failure.set(error.message ?: "Screenshot conversion failed")
                 } finally {
