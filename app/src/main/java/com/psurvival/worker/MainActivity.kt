@@ -45,7 +45,7 @@ class MainActivity : Activity() {
             setPadding(32, 28, 32, 28)
         }
         root.addView(TextView(this).apply {
-            text = "P&S Worker"
+            text = "P&S Worker Diagnostics"
             textSize = 24f
         })
         root.addView(TextView(this).apply {
