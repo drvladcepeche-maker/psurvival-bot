@@ -227,6 +227,17 @@ class MainActivity : Activity() {
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }, matchWidth())
         root.addView(Button(this).apply {
+            text = "Диагностика Worker"
+            setOnClickListener {
+                val lastState = prefs.getString("worker_last_status", "нет данных").orEmpty()
+                val lastDetail = prefs.getString("worker_last_error", "").orEmpty()
+                val lastAt = prefs.getLong("worker_last_status_at", 0L)
+                val age = if (lastAt > 0L) ((System.currentTimeMillis() - lastAt) / 1000L).coerceAtLeast(0L) else -1L
+                val ageText = if (age >= 0L) "$age сек. назад" else "ещё не запускалась"
+                status.text = "Состояние: $lastState\nПоследнее событие: $ageText\n${lastDetail.ifBlank { "Ошибок не записано." }}"
+            }
+        }, matchWidth())
+        root.addView(Button(this).apply {
             text = "Проверить доступность API"
             setOnClickListener {
                 Thread {
