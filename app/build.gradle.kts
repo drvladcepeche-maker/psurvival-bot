@@ -8,11 +8,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.psurvival.worker"
+        applicationId = "com.psurvival.worker.diagnostics"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.2-diagnostics"
     }
 
     compileOptions {

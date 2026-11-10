@@ -25,7 +25,17 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        recordWorkerStatus("service_connected", "AccessibilityService подключена")
         executor.scheduleWithFixedDelay({ pollOrHeartbeat() }, 2, 10, TimeUnit.SECONDS)
+    }
+
+    private fun recordWorkerStatus(state: String, detail: String? = null) {
+        val editor = getSharedPreferences("worker", MODE_PRIVATE).edit()
+            .putString("worker_last_status", state)
+            .putLong("worker_last_status_at", System.currentTimeMillis())
+        if (detail.isNullOrBlank()) editor.remove("worker_last_error")
+        else editor.putString("worker_last_error", detail.take(240))
+        editor.apply()
     }
 
     override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
@@ -89,9 +99,12 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     private val recordingLock = Any()
 
-    override fun onInterrupt() = Unit
+    override fun onInterrupt() {
+        recordWorkerStatus("service_interrupted", "Android прервал AccessibilityService")
+    }
 
     override fun onDestroy() {
+        recordWorkerStatus("service_destroyed", "AccessibilityService уничтожена Android")
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -105,30 +118,50 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     @Synchronized
     private fun pollOrHeartbeat() {
-        val config = settings() ?: return
+        val config = settings()
+        if (config == null) {
+            recordWorkerStatus("missing_config", "Не сохранены Worker ID или токен psw_…")
+            return
+        }
         val current = activeJobId
         if (current != null) {
             if (System.currentTimeMillis() - lastHeartbeatAt > 25_000) {
-                runCatching { api(config.second, JSONObject().put("action", "heartbeat").put("job_id", current)) }
-                lastHeartbeatAt = System.currentTimeMillis()
+                try {
+                    api(config.second, JSONObject().put("action", "heartbeat").put("job_id", current))
+                    recordWorkerStatus("heartbeat_ok", "Задание активно: $current")
+                } catch (error: Exception) {
+                    recordWorkerStatus("heartbeat_error", error.message ?: "Ошибка heartbeat")
+                } finally {
+                    lastHeartbeatAt = System.currentTimeMillis()
+                }
             }
             return
         }
-        val response = runCatching {
-            api(config.second, JSONObject().put("action", "claim"))
-        }.getOrNull() ?: return
-        if (!response.optBoolean("ok")) return
-        val job = response.optJSONObject("job") ?: return
-        val jobId = job.optString("id")
-        if (jobId.isBlank()) return
-        activeJobId = jobId
-        lastHeartbeatAt = System.currentTimeMillis()
-        executor.execute { executeJob(config.second, job) }
+        try {
+            val response = api(config.second, JSONObject().put("action", "claim"))
+            val job = response.optJSONObject("job")
+            if (job == null) {
+                recordWorkerStatus("connected_idle", "Связь с Supabase подтверждена; ожидаю задания")
+                return
+            }
+            val jobId = job.optString("id")
+            if (jobId.isBlank()) {
+                recordWorkerStatus("invalid_job", "Сервер вернул задание без ID")
+                return
+            }
+            activeJobId = jobId
+            lastHeartbeatAt = System.currentTimeMillis()
+            recordWorkerStatus("job_claimed", "Получено задание $jobId")
+            executor.execute { executeJob(config.second, job) }
+        } catch (error: Exception) {
+            recordWorkerStatus("api_error", error.message ?: error.javaClass.simpleName)
+        }
     }
 
     private fun executeJob(token: String, job: JSONObject) {
         val jobId = job.optString("id")
         try {
+            recordWorkerStatus("job_running", "Выполняется задание $jobId")
             capturedUiSnapshots.clear()
             val payload = job.optJSONObject("payload") ?: JSONObject()
             val steps = payload.optJSONArray("steps") ?: JSONArray()
@@ -144,13 +177,18 @@ class WorkerAccessibilityService : AccessibilityService() {
                 result.put("ui_snapshots", snapshots)
             }
             api(token, JSONObject().put("action", "complete").put("job_id", jobId).put("result", result))
+            recordWorkerStatus("job_completed", "Сервер подтвердил завершение $jobId")
         } catch (error: Throwable) {
+            val message = (error.message ?: error.javaClass.simpleName).take(240)
+            recordWorkerStatus("job_error", message)
             runCatching {
                 api(token, JSONObject()
                     .put("action", "fail")
                     .put("job_id", jobId)
                     .put("error", (error.message ?: "Executor error").take(500))
                     .put("retryable", error !is IllegalArgumentException))
+            }.onFailure { reportError ->
+                recordWorkerStatus("report_error", "Не удалось сообщить серверу об ошибке: ${reportError.message}")
             }
         } finally {
             activeJobId = null
@@ -350,7 +388,10 @@ class WorkerAccessibilityService : AccessibilityService() {
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw IllegalStateException("Worker API HTTP $code")
+            if (code !in 200..299) {
+                val safeBody = runCatching { JSONObject(raw).optString("error") }.getOrNull().orEmpty()
+                throw IllegalStateException("Worker API HTTP $code${if (safeBody.isNotBlank()) ": $safeBody" else ""}")
+            }
             val parsed = JSONObject(raw)
             if (!parsed.optBoolean("ok")) {
                 throw IllegalStateException(parsed.optString("error", "Worker API rejected the request"))
