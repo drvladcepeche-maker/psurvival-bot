@@ -9,6 +9,7 @@ import worker
 
 
 class WorkerLogRedactionTests(unittest.TestCase):
+    """Keep public CI logs free of searched identifiers and profile URLs."""
     @patch.object(worker, "patch_job")
     @patch.object(worker, "sherlock")
     @patch.object(worker, "SitesInformation")
