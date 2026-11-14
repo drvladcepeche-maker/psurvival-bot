@@ -53,6 +53,43 @@ jobs:
           }
           console.log("Worker endpoint health and unauthenticated-request rejection verified.");
           NODE
+      - name: Verify chat archive API CORS and unauthenticated rejection
+        run: |
+          node --input-type=module <<'NODE'
+          const url = "https://tscsenfbbogsnipqgrfm.supabase.co/functions/v1/chat-archive-api";
+          const allowedOrigin = "https://osiris.prekrasnoeblizko.ru";
+          const allowed = await fetch(url, {
+            method: "OPTIONS",
+            headers: {
+              "Origin": allowedOrigin,
+              "Access-Control-Request-Method": "POST",
+              "Access-Control-Request-Headers": "authorization,content-type",
+            },
+          });
+          if (allowed.status !== 204) {
+            throw new Error(`Allowed CORS preflight should return 204, got ${allowed.status}`);
+          }
+          const denied = await fetch(url, {
+            method: "OPTIONS",
+            headers: {
+              "Origin": "https://smoke-test.invalid",
+              "Access-Control-Request-Method": "POST",
+              "Access-Control-Request-Headers": "authorization,content-type",
+            },
+          });
+          if (denied.status !== 403) {
+            throw new Error(`Disallowed CORS preflight should return 403, got ${denied.status}`);
+          }
+          const unauthorized = await fetch(url, {
+            method: "POST",
+            headers: { "Origin": allowedOrigin, "content-type": "application/json" },
+            body: JSON.stringify({ action: "get_settings" }),
+          });
+          if (unauthorized.status !== 401) {
+            throw new Error(`Chat archive API should reject missing bearer token with HTTP 401, got ${unauthorized.status}`);
+          }
+          console.log("Chat archive CORS allow/deny and missing-token rejection verified.");
+          NODE
   deployed-smoke:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: validate
