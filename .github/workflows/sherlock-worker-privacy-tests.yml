@@ -1,0 +1,36 @@
+name: Sherlock Worker Privacy Tests
+
+on:
+  pull_request:
+    branches: [main, "security/**"]
+    paths:
+      - "sherlock-worker/worker.py"
+      - "sherlock-worker/test_worker_logging.py"
+      - "sherlock-worker/requirements.txt"
+  push:
+    branches: [main]
+    paths:
+      - "sherlock-worker/worker.py"
+      - "sherlock-worker/test_worker_logging.py"
+      - "sherlock-worker/requirements.txt"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sherlock-worker/requirements.txt
+      - name: Install pinned worker dependencies
+        run: python -m pip install --disable-pip-version-check -r sherlock-worker/requirements.txt
+      - name: Compile worker and tests
+        run: python -m py_compile sherlock-worker/worker.py sherlock-worker/test_worker_logging.py
+      - name: Verify personal data is absent from worker logs
+        run: python sherlock-worker/test_worker_logging.py
