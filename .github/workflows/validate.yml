@@ -2,9 +2,9 @@ name: Validate Telegram bot
 
 on:
   push:
-    branches: [main, fix/game-automation-and-bridge, feature/sherlock-telegram-integration]
+    branches: [main, fix/game-automation-and-bridge, feature/sherlock-telegram-integration, "security/**"]
   pull_request:
-    branches: [main, "security/**"]
+    branches: [main]
 
 permissions:
   contents: read
