@@ -68,7 +68,9 @@ def process(job: dict[str, Any]) -> None:
             site_data = dict(list(site_data.items())[:MAX_SITES])
         patch_job(job_id, {"total_sites": len(site_data),
                            "updated_at": datetime.now(timezone.utc).isoformat()})
-        log.info("Starting %s across %s sites", username, len(site_data))
+        # Public Actions logs must not contain searched usernames, job IDs, or raw exception details.
+        # Search terms and result URLs remain in the protected job record, not stdout/stderr.
+        log.info("Starting Sherlock lookup; sites=%s", len(site_data))
         results = sherlock(username=username, site_data=site_data, query_notify=Collector(), timeout=REQUEST_TIMEOUT)
         normalized = []
         for site_name, site_result in results.items():
@@ -98,9 +100,9 @@ def process(job: dict[str, Any]) -> None:
             "checked_sites": len(normalized), "found_count": len(found),
             "results": compact, "finished_at": finished, "updated_at": finished,
         }, "\n".join(lines))
-        log.info("Finished %s: found=%s checked=%s", username, len(found), len(normalized))
+        log.info("Finished Sherlock lookup; found=%s checked=%s", len(found), len(normalized))
     except Exception as exc:
-        log.exception("Sherlock job failed: %s", job_id)
+        log.error("Sherlock job failed; exception_type=%s", type(exc).__name__)
         finished = datetime.now(timezone.utc).isoformat()
         patch_job(job_id, {
             "status": "failed", "error_message": str(exc)[:500],
