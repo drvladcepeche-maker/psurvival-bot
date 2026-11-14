@@ -2,7 +2,7 @@ name: Validate Telegram bot
 
 on:
   push:
-    branches: [main, fix/game-automation-and-bridge, feature/sherlock-telegram-integration]
+    branches: [main, fix/game-automation-and-bridge, feature/sherlock-telegram-integration, "security/**"]
   pull_request:
     branches: [main]
 
@@ -33,6 +33,15 @@ jobs:
         run: |
           node --check termux-bridge/bridge.mjs
           node --check termux-bridge/apk-inspect.mjs
+      - name: Install Sherlock worker test dependencies
+        if: hashFiles('sherlock-worker/test_worker_logging.py') != ''
+        run: python -m pip install --disable-pip-version-check -r sherlock-worker/requirements.txt
+      - name: Compile Sherlock worker and privacy tests
+        if: hashFiles('sherlock-worker/test_worker_logging.py') != ''
+        run: python -m py_compile sherlock-worker/worker.py sherlock-worker/test_worker_logging.py
+      - name: Verify Sherlock worker logs redact personal data
+        if: hashFiles('sherlock-worker/test_worker_logging.py') != ''
+        run: python sherlock-worker/test_worker_logging.py
       - name: Verify worker endpoint rejects unauthenticated calls
         run: |
           node --input-type=module <<'NODE'
@@ -53,6 +62,79 @@ jobs:
           }
           console.log("Worker endpoint health and unauthenticated-request rejection verified.");
           NODE
+      - name: Verify chat archive API CORS and unauthenticated rejection
+        run: |
+          node --input-type=module <<'NODE'
+          const url = "https://tscsenfbbogsnipqgrfm.supabase.co/functions/v1/chat-archive-api";
+          const allowedOrigin = "https://osiris.prekrasnoeblizko.ru";
+          const allowed = await fetch(url, {
+            method: "OPTIONS",
+            headers: {
+              "Origin": allowedOrigin,
+              "Access-Control-Request-Method": "POST",
+              "Access-Control-Request-Headers": "authorization,content-type",
+            },
+          });
+          if (allowed.status !== 204) {
+            throw new Error(`Allowed CORS preflight should return 204, got ${allowed.status}`);
+          }
+          const denied = await fetch(url, {
+            method: "OPTIONS",
+            headers: {
+              "Origin": "https://smoke-test.invalid",
+              "Access-Control-Request-Method": "POST",
+              "Access-Control-Request-Headers": "authorization,content-type",
+            },
+          });
+          if (denied.status !== 403) {
+            throw new Error(`Disallowed CORS preflight should return 403, got ${denied.status}`);
+          }
+          const unauthorized = await fetch(url, {
+            method: "POST",
+            headers: { "Origin": allowedOrigin, "content-type": "application/json" },
+            body: JSON.stringify({ action: "get_settings" }),
+          });
+          if (unauthorized.status !== 401) {
+            throw new Error(`Chat archive API should reject missing bearer token with HTTP 401, got ${unauthorized.status}`);
+          }
+          console.log("Chat archive CORS allow/deny and missing-token rejection verified.");
+          NODE
+      - name: Verify Graphify machine endpoints reject missing and malformed credentials
+        run: |
+          node --input-type=module <<'NODE'
+          const endpoints = [
+            {
+              name: "Graphify Memory MCP",
+              url: "https://tscsenfbbogsnipqgrfm.supabase.co/functions/v1/graphify-memory-mcp",
+              body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+            },
+            {
+              name: "Graphify Artifact Upload",
+              url: "https://tscsenfbbogsnipqgrfm.supabase.co/functions/v1/graphify-artifact-upload",
+              body: { project_id: "contacts" },
+            },
+          ];
+          for (const endpoint of endpoints) {
+            for (const authorization of [undefined, "Bearer invalid-smoke-test-token"]) {
+              const headers = { "content-type": "application/json" };
+              if (authorization) headers.authorization = authorization;
+              const response = await fetch(endpoint.url, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(endpoint.body),
+              });
+              if (response.status !== 401) {
+                throw new Error(`${endpoint.name} should reject unauthenticated/malformed credentials with HTTP 401, got ${response.status}`);
+              }
+            }
+          }
+          console.log("Both Graphify machine endpoints reject missing and malformed credentials.");
+          NODE
+  deployed-smoke:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
       - name: Register and verify deployed Telegram webhook
         run: |
           node --input-type=module <<'NODE'
@@ -64,7 +146,6 @@ jobs:
             throw new Error("Unexpected health endpoint response");
           }
           console.log(`Telegram webhook status: ${String(data.status)}`);
-          if (typeof data.diagnostic === "string" && data.diagnostic) console.log(`Telegram diagnostic: ${data.diagnostic}`);
           if (data.configured !== true) throw new Error("Telegram secrets are missing");
           if (data.webhookRegistered !== true) {
             throw new Error(`Telegram webhook is not verified (status: ${String(data.status)})`);
