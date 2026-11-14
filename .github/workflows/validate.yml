@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, fix/game-automation-and-bridge, feature/sherlock-telegram-integration]
   pull_request:
-    branches: [main]
+    branches: [main, "security/**"]
 
 permissions:
   contents: read
