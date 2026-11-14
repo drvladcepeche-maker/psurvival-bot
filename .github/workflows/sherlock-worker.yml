@@ -34,7 +34,9 @@ jobs:
         working-directory: sherlock-worker
         run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Validate Python syntax
-        run: python -m py_compile sherlock-worker/worker.py
+        run: python -m py_compile sherlock-worker/worker.py sherlock-worker/test_worker_logging.py
+      - name: Test that worker logs redact personal data
+        run: python sherlock-worker/test_worker_logging.py
       - name: Process queued searches
         env:
           SUPABASE_URL: https://xevqbgjtxuveeqaiacvm.supabase.co
