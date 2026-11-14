@@ -33,6 +33,15 @@ jobs:
         run: |
           node --check termux-bridge/bridge.mjs
           node --check termux-bridge/apk-inspect.mjs
+      - name: Install Sherlock worker test dependencies
+        if: hashFiles('sherlock-worker/worker.py', 'sherlock-worker/test_worker_logging.py') != ''
+        run: python -m pip install --disable-pip-version-check -r sherlock-worker/requirements.txt
+      - name: Compile Sherlock worker and privacy tests
+        if: hashFiles('sherlock-worker/worker.py', 'sherlock-worker/test_worker_logging.py') != ''
+        run: python -m py_compile sherlock-worker/worker.py sherlock-worker/test_worker_logging.py
+      - name: Verify Sherlock worker logs redact personal data
+        if: hashFiles('sherlock-worker/worker.py', 'sherlock-worker/test_worker_logging.py') != ''
+        run: python sherlock-worker/test_worker_logging.py
       - name: Verify worker endpoint rejects unauthenticated calls
         run: |
           node --input-type=module <<'NODE'
