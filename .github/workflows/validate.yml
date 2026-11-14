@@ -53,6 +53,11 @@ jobs:
           }
           console.log("Worker endpoint health and unauthenticated-request rejection verified.");
           NODE
+  deployed-smoke:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
       - name: Register and verify deployed Telegram webhook
         run: |
           node --input-type=module <<'NODE'
@@ -64,7 +69,6 @@ jobs:
             throw new Error("Unexpected health endpoint response");
           }
           console.log(`Telegram webhook status: ${String(data.status)}`);
-          if (typeof data.diagnostic === "string" && data.diagnostic) console.log(`Telegram diagnostic: ${data.diagnostic}`);
           if (data.configured !== true) throw new Error("Telegram secrets are missing");
           if (data.webhookRegistered !== true) {
             throw new Error(`Telegram webhook is not verified (status: ${String(data.status)})`);
