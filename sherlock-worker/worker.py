@@ -128,4 +128,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        # Do not let Python's default traceback expose request metadata or task details in public logs.
+        log.error("Sherlock worker stopped; exception_type=%s", type(exc).__name__)
+        raise SystemExit(1) from None
