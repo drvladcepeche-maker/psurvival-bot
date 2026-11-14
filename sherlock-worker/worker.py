@@ -69,6 +69,7 @@ def process(job: dict[str, Any]) -> None:
         patch_job(job_id, {"total_sites": len(site_data),
                            "updated_at": datetime.now(timezone.utc).isoformat()})
         # Public Actions logs must not contain searched usernames, job IDs, or raw exception details.
+        # Search terms and result URLs remain in the protected job record, not stdout/stderr.
         log.info("Starting Sherlock lookup; sites=%s", len(site_data))
         results = sherlock(username=username, site_data=site_data, query_notify=Collector(), timeout=REQUEST_TIMEOUT)
         normalized = []
