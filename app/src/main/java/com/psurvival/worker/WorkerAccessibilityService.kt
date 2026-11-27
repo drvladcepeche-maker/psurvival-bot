@@ -288,7 +288,7 @@ class WorkerAccessibilityService : AccessibilityService() {
             }
             "assert_screen" -> {
                 val expected = step.optString("category").trim().lowercase(java.util.Locale.ROOT)
-                val allowed = setOf("city", "quests", "map", "heroes", "alliance", "mail", "events", "battle")
+                val allowed = setOf("city", "building", "quests", "map", "heroes", "alliance", "mail", "events", "battle")
                 if (expected !in allowed) {
                     throw IllegalArgumentException("assert_screen category must be one of: ${allowed.joinToString()}")
                 }
