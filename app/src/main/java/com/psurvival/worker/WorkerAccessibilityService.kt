@@ -385,11 +385,11 @@ class WorkerAccessibilityService : AccessibilityService() {
         api.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
         api.setImage(bitmap)
         try {
-            val text = api.utf8Text.orEmpty().take(12000)
+            val text = api.getUTF8Text().orEmpty().take(12000)
             val lines = JSONArray()
             val width = bitmap.width.coerceAtLeast(1)
             val height = bitmap.height.coerceAtLeast(1)
-            val iterator = api.resultIterator
+            val iterator = api.getResultIterator()
             if (iterator != null) {
                 try {
                     val level = TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE
