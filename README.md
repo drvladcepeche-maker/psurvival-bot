@@ -51,6 +51,17 @@ supabase functions deploy psurvival-worker --project-ref xevqbgjtxuveeqaiacvm --
 
 The Telegram function intentionally uses `--no-verify-jwt` because Telegram does not send a Supabase user JWT; it validates Telegram's webhook secret header. The worker API uses per-device bearer tokens hashed in the database and checks device ownership before claiming jobs.
 
+### Android Worker local build
+
+Before running Gradle locally, fetch the pinned Russian OCR model and verify its SHA-256:
+
+```sh
+bash scripts/download-russian-ocr-model.sh
+gradle :app:testDebugUnitTest :app:assembleDebug
+```
+
+GitHub Actions performs the same model download and checksum verification automatically.
+
 ## Automated validation
 
 GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secret comparison, verifies the Telegram webhook, and checks that the worker API health endpoint is configured and rejects unauthenticated POST requests.
