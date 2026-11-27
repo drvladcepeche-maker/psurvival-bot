@@ -187,7 +187,7 @@ class WorkerAccessibilityService : AccessibilityService() {
             "tap_ocr_word" -> {
                 val needle = step.optString("text").trim()
                 val normalizedNeedle = needle.lowercase(java.util.Locale.ROOT).filter { it.isLetterOrDigit() }
-                if (normalizedNeedle.isEmpty() || normalizedNeedle.contains(" ")) {
+                if (normalizedNeedle.isEmpty() || needle.any { it.isWhitespace() }) {
                     throw IllegalArgumentException("tap_ocr_word requires one word in text")
                 }
                 val snapshot = captureGameUiSnapshot()
