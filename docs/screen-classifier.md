@@ -11,7 +11,7 @@ The Android worker uses Tesseract4Android 4.9.0 (Tesseract 5.5.1) with the Russi
 `capture_ui` now adds `screen_classification` beside the existing OCR payload. The classifier runs locally from the OCR text and returns:
 
 - `classifier`: ruleset version (`pns_keyword_rules_v1`);
-- `category`: `city`, `quests`, `map`, `heroes`, `alliance`, `mail`, `events`, `battle`, or `unknown`;
+- `category`: `city`, `building`, `quests`, `map`, `heroes`, `alliance`, `mail`, `events`, `battle`, or `unknown`;
 - `confidence`: heuristic separation score, not a calibrated probability;
 - `actionable`: always `false`;
 - `reason`: empty OCR, no evidence, ambiguous/weak evidence, or matched keywords;
@@ -31,4 +31,4 @@ This is a keyword baseline, not a trained visual model. OCR typos, language chan
 
 ## Validation
 
-Unit tests cover Russian city labels observed on the Redmi 10C, the observed Russian quest screen (including `Основной Квест`, `Суточный Квест`, and `Активность Альянса`), an in-game Scarlett purchase offer that must remain `unknown`, English map labels, unknown numeric/resource-only text, and empty OCR. Live-device validation should compare the classifier output with the actual screen before any action layer is considered.
+Unit tests cover Russian city labels observed on the Redmi 10C, the observed Headquarters building-details screen, the observed Russian quest screen (including `Основной Квест`, `Суточный Квест`, and `Активность Альянса`), an in-game Scarlett purchase offer that must remain `unknown`, English map labels, unknown numeric/resource-only text, and empty OCR. Live-device validation should compare the classifier output with the actual screen before any action layer is considered.
