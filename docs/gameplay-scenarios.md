@@ -20,7 +20,7 @@ The current worker accepts:
 - `tap_description`: content description, e.g. `{"type":"tap_description","description":"Close"}`
 - `tap_coordinates`: physical screen coordinates in pixels, e.g. `{"type":"tap_coordinates","x":360,"y":750}` (must be calibrated for the device; do not copy coordinates between resolutions)
 - `back`: Android Back action.
-- `assert_screen`: capture the current game UI, run on-device OCR/classification, and stop the job unless the detected category exactly matches the expected value, e.g. `{"type":"assert_screen","category":"city"}`. Allowed categories: `city`, `quests`, `map`, `heroes`, `alliance`, `mail`, `events`, `battle`. The screen snapshot and classifier evidence are returned with the job result. This guard does not prove an individual button/action succeeded; it prevents the next step from running when the expected screen is not detected.
+- `assert_screen`: capture the current game UI, run on-device OCR/classification, and stop the job unless the detected category exactly matches the expected value, e.g. `{"type":"assert_screen","category":"city"}`. Allowed categories: `city`, `building`, `quests`, `map`, `heroes`, `alliance`, `mail`, `events`, `battle`. The screen snapshot and classifier evidence are returned with the job result. This guard does not prove an individual button/action succeeded; it prevents the next step from running when the expected screen is not detected.
 - `tap_ocr_word`: find one unique exact OCR word with confidence ≥55 and tap its bounding-box center; optional `offset_x_px` / `offset_y_px` calibrate the tap relative to the word. The final target must remain inside the active game window bounds captured with the screenshot; taps into Android system bars are rejected. Multiword selectors, ambiguous matches, missing boxes, low-confidence words, and out-of-window targets fail closed.
 
 Each scenario must stop on an unexpected screen rather than blindly continue. The executor can assert a coarse screen category and capture OCR evidence, but it cannot yet prove that a specific game action succeeded; use short scenarios and confirm outcomes manually.
@@ -57,20 +57,27 @@ Use this as the prerequisite for every other routine. The delay is a starting va
 
 Current device note: on the Redmi 10C, the visible bottom `Квесты` label is outside the Unity accessibility window bounds (`[0,0][720,1507]` on a 720×1650 display). Do not automate that tab until the system-bar/window-inset behavior is resolved. The smoke scenario therefore stops after a verified city capture; the quest-screen classifier is validated from a manually opened screen, not yet from an automated navigation sequence.
 
-## Scenario 2 — city screen capture and classification (read-only)
+## Scenario 2 — inspect the main-quest target building (read-only)
 
-This read-only smoke scenario verifies the city screen and returns the OCR snapshot. It does not navigate through the bottom game tabs; on the current Redmi 10C build those tabs appear below the active Unity window boundary.
+This read-only scenario follows the visible main-task card to its highlighted building, opens the building menu, and reads the building-details screen. It deliberately stops before any upgrade action.
 
 ```json
 [
   {"type":"launch_app","package_name":"com.global.ztmslg"},
   {"type":"wait","duration_ms":8000},
   {"type":"assert_screen","category":"city"},
+  {"type":"tap_ocr_word","text":"Улучшите"},
+  {"type":"wait","duration_ms":800},
+  {"type":"tap_coordinates","x":360,"y":430},
+  {"type":"wait","duration_ms":800},
+  {"type":"tap_ocr_word","text":"Детали"},
+  {"type":"wait","duration_ms":1000},
+  {"type":"assert_screen","category":"building"},
   {"type":"capture_ui"}
 ]
 ```
 
-Expected outcome: `assert_screen` returns `city` and `capture_ui` returns the OCR snapshot. No task is opened, no reward is claimed, and no game resources are consumed.
+Expected outcome: the game highlights the task target, opens the building menu, and returns a `building` classification on the details screen. No `Улучшить` button is pressed; no resources, speedups, or diamonds are spent. The coordinate is calibrated only for Redmi 10C at 720×1650 and must not be reused on another device or resolution. This sequence has been manually observed through ADB; execution through Worker 0.1.3 remains pending installation.
 
 ## Scenario 3 — resource gathering preparation (manual confirmation required)
 
