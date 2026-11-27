@@ -13,7 +13,7 @@ internal object GameScreenClassifier {
     private data class ScoredRule(val rule: Rule, val matches: List<String>, val score: Int)
 
     private val rules = listOf(
-        Rule("city", listOf("стро", "улучш", "казарм", "склад", "ферм", "завод", "лагер", "стрелков", "наук", "транспорт", "лаборатор", "штаб-квартир", "база", "город", "building", "upgrade", "barracks", "warehouse", "farm", "headquarters"), 4),
+        Rule("city", listOf("стро", "стром", "улучш", "казарм", "склад", "ферм", "завод", "лагер", "стрелков", "стрепк", "наук", "транспорт", "лаборатор", "штаб-квартир", "база", "город", "building", "upgrade", "barracks", "warehouse", "farm", "headquarters"), 3),
         Rule("quests", listOf("задан", "ежеднев", "награ", "мисси", "активност", "получить", "daily", "quest", "mission", "claim reward"), 4),
         Rule("map", listOf("мир", "карта", "координат", "ресурсная точка", "сбор", "пустош", "world", "map", "gather", "march"), 4),
         Rule("heroes", listOf("геро", "оскол", "навык", "формац", "звезд", "heroes", "hero", "shards", "formation", "skill"), 4),
