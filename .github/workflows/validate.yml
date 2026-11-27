@@ -2,7 +2,7 @@ name: Validate Telegram bot
 
 on:
   push:
-    branches: [main, fix/game-automation-and-bridge, feature/sherlock-telegram-integration]
+    branches: [main, fix/game-automation-and-bridge, feature/sherlock-telegram-integration, fix/android-arrayadapter-refresh-20261128]
   pull_request:
     branches: [main]
 
