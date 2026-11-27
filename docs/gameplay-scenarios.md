@@ -20,6 +20,7 @@ The current worker accepts:
 - `tap_description`: content description, e.g. `{"type":"tap_description","description":"Close"}`
 - `tap_coordinates`: physical screen coordinates in pixels, e.g. `{"type":"tap_coordinates","x":540,"y":1800}` (must be calibrated for the device; do not copy coordinates between resolutions)
 - `back`: Android Back action.
+- `assert_screen`: capture the current game UI, run on-device OCR/classification, and stop the job unless the detected category exactly matches the expected value, e.g. `{"type":"assert_screen","category":"city"}`. Allowed categories: `city`, `quests`, `map`, `heroes`, `alliance`, `mail`, `events`, `battle`. The screen snapshot and classifier evidence are returned with the job result. This guard does not prove an individual button/action succeeded; it prevents the next step from running when the expected screen is not detected.
 
 Each scenario must stop on an unexpected screen rather than blindly continue. The present executor cannot yet detect a specific screen or verify that a game action succeeded; use short scenarios and confirm outcomes manually.
 
