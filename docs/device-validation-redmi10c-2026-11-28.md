@@ -65,3 +65,19 @@ The coordinate is valid only for the observed 720×1650 layout and current city 
 ## Next validation target
 
 Parse the building details into structured fields (building name, current level, effect, unlock thresholds) and compare the OCR output across two clean captures. Do not trigger troop training or building upgrades during this read-only phase.
+
+
+## OCR repeatability — four consecutive captures
+
+A controlled job was executed while the Shooter Camp Details panel was open:
+
+- Job: `34d7ac9d-8f3b-40e4-a972-8cde9870eaee`
+- Steps: `assert_screen(building) → capture_ui → wait 1500 ms → assert_screen(building) → capture_ui`
+- Attempts: 1; terminal status: `succeeded`; executed steps: 5; returned UI snapshots: 4 (two screen guards plus two explicit captures)
+- All four snapshots reported OCR `status=ok`, screen category `building`, and classifier confidence `0.92`.
+- All four OCR texts consistently contained `Данные здания`, the Shooter Camp description, `Уровень`, `Разблокирует`, and the three troop names.
+- The unlock table repeatedly associated level 1 with `Арбалетчик`, level 4 with `Пистолетчик`, and level 7 with `Стрелец`.
+
+The remaining table rows were OCR'd inconsistently (for example, isolated digits 2, 3, 5, 6, and 8); their meaning is not established. The `Эффект` value is also not reliably legible in these captures. Do not infer either field from this test.
+
+No UI gestures beyond read-only capture/guards were performed. No resources or premium currency were spent. The final queue check returned zero queued/running jobs.
