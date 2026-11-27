@@ -50,6 +50,16 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesObservedHeadquartersDetailsScreen() {
+        val result = GameScreenClassifier.classify(
+            "Данные здания Штаб-Квартира это ключевое здание для убежища " +
+                "Улучшите её чтобы открыть новые постройки и увеличить предельный уровень зданий " +
+                "Эффект Уровень Размер Отряда Вместимость Лазарета Разблокирует Откроет Кампанию"
+        )
+        assertEquals("building", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun recognizesTheObservedRussianQuestScreen() {
         val result = GameScreenClassifier.classify(
             "Квест Основной Квест Суточный Квест Активность Альянса Рекомендация " +
