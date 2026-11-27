@@ -31,6 +31,24 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesTheObservedRedmiCityScreenLabels() {
+        val result = GameScreenClassifier.classify(
+            "Стройка Наука Яма Сторожевая Башня Штаб-Квартира " +
+                "Лагерь Стрелков Транспортный Завод Улучшите Лагерь Стрелков до 16-го ур."
+        )
+        assertEquals("city", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
+    @Test fun leavesScarlettPurchaseOfferUnknown() {
+        val result = GameScreenClassifier.classify(
+            "Набор Скарлетт 3 дня Макс эффект Скорость строительства " +
+                "Бесплатное ускорение 80 мин Можно купить только один набор 449 рублей"
+        )
+        assertEquals("unknown", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun handlesEmptyOcr() {
         val result = GameScreenClassifier.classify("")
         assertEquals("unknown", result.getString("category"))
