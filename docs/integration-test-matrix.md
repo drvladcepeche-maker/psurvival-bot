@@ -33,6 +33,7 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 | INT-15 | Phone screen locked / app process restarted | Behavior documented; no claim of unattended reliability without testing | Device observation |
 | INT-16 | `assert_screen` expects the current screen category | Matching category allows the next step; `unknown` or a different category fails the job before the next UI action and returns the captured evidence | Worker job result + device screen |
 | INT-17 | `tap_ocr_word` targets a single visible word | Exactly one matching OCR word with confidence ≥55 and valid bounds is tapped; zero/multiple/low-confidence matches fail without tapping | OCR snapshot + gesture result |
+| INT-18 | OCR word box falls outside the active Unity window | Worker rejects the tap before dispatching a gesture; Android system navigation receives no accidental game-worker tap | Snapshot `window_bounds` + job failure |
 
 ## Common fault isolation
 
