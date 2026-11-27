@@ -224,6 +224,15 @@ class WorkerAccessibilityService : AccessibilityService() {
                     .coerceIn(0f, (metrics.widthPixels - 1).toFloat())
                 val y = ((top + bottom) / 2f * metrics.heightPixels / 10000f + offsetY)
                     .coerceIn(0f, (metrics.heightPixels - 1).toFloat())
+                val windowBounds = snapshot.optJSONObject("window_bounds")
+                    ?: throw IllegalStateException("Active game window bounds are unavailable")
+                val windowLeft = windowBounds.optInt("left", 0)
+                val windowTop = windowBounds.optInt("top", 0)
+                val windowRight = windowBounds.optInt("right", 0)
+                val windowBottom = windowBounds.optInt("bottom", 0)
+                if (x < windowLeft || x >= windowRight || y < windowTop || y >= windowBottom) {
+                    throw IllegalStateException("OCR target is outside the interactive game window: $needle")
+                }
                 if (!tapCoordinates(x, y)) throw IllegalStateException("OCR word tap failed: $needle")
             }
             "tap_description" -> {
@@ -310,6 +319,8 @@ class WorkerAccessibilityService : AccessibilityService() {
     private fun captureGameUiSnapshot(): JSONObject {
         val root = rootInActiveWindow ?: throw IllegalStateException("Нет активного окна для capture_ui")
         val activePackage = root.packageName?.toString().orEmpty()
+        val windowBounds = android.graphics.Rect()
+        root.getBoundsInScreen(windowBounds)
         val prefs = getSharedPreferences("worker", MODE_PRIVATE)
         val selectedPackage = prefs.getString("selected_game_package", "com.global.ztmslg")
             .orEmpty().ifBlank { "com.global.ztmslg" }
@@ -372,6 +383,11 @@ class WorkerAccessibilityService : AccessibilityService() {
 
         return JSONObject()
             .put("package_name", activePackage)
+            .put("window_bounds", JSONObject()
+                .put("left", windowBounds.left)
+                .put("top", windowBounds.top)
+                .put("right", windowBounds.right)
+                .put("bottom", windowBounds.bottom))
             .put("captured_at_ms", System.currentTimeMillis())
             .put("node_count", visited)
             .put("labels", labels)
