@@ -11,6 +11,15 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesCityFromActualMlKitOcrGlyphConfusions() {
+        val result = GameScreenClassifier.classify(
+            "CTpoMKa (0/1) Hayka (0/1) Jlarepb 5oňLLOB " +
+                "Jlarepb CTpenKOB TpaHcnopTHbIY 3aBoA ynyywTe Narepb UTab-KBapTupa"
+        )
+        assertEquals("city", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun recognizesEnglishMapLabels() {
         val result = GameScreenClassifier.classify("World Map Gather March")
         assertEquals("map", result.getString("category"))
