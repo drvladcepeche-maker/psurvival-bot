@@ -7,15 +7,14 @@ import android.graphics.Path
 import android.graphics.Bitmap
 import android.view.Display
 import android.os.Build
-import com.google.android.gms.tasks.Tasks
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.googlecode.tesseract.android.TessBaseAPI
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.CountDownLatch
@@ -27,7 +26,8 @@ import java.util.concurrent.atomic.AtomicReference
 class WorkerAccessibilityService : AccessibilityService() {
     private val executor = Executors.newScheduledThreadPool(2)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val textRecognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+    private val ocrLock = Any()
+    @Volatile private var tesseractApi: TessBaseAPI? = null
     @Volatile private var activeJobId: String? = null
     @Volatile private var lastHeartbeatAt = 0L
     private val capturedUiSnapshots = mutableListOf<JSONObject>()
@@ -102,7 +102,10 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         executor.shutdownNow()
-        runCatching { textRecognizer.close() }
+        synchronized(ocrLock) {
+            runCatching { tesseractApi?.recycle() }
+            tesseractApi = null
+        }
         super.onDestroy()
     }
 
@@ -377,38 +380,82 @@ class WorkerAccessibilityService : AccessibilityService() {
         return result.get() ?: throw IllegalStateException(failure.get() ?: "Screenshot bitmap is empty")
     }
 
-    private fun recognizeScreenshot(bitmap: Bitmap): JSONObject {
-        val inputImage = InputImage.fromBitmap(bitmap, 0)
-        val visionText = Tasks.await(textRecognizer.process(inputImage), 15, TimeUnit.SECONDS)
-        val lines = JSONArray()
-        val width = bitmap.width.coerceAtLeast(1)
-        val height = bitmap.height.coerceAtLeast(1)
-
-        for (block in visionText.textBlocks) {
-            for (line in block.lines) {
-                val bounds = line.boundingBox ?: continue
-                val item = JSONObject()
-                    .put("text", line.text.take(160))
-                    .put("bounds", JSONObject()
-                        .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
-                        .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
-                        .put("right", (bounds.right * 10000 / width).coerceIn(0, 10000))
-                        .put("bottom", (bounds.bottom * 10000 / height).coerceIn(0, 10000)))
-                if (line.confidence >= 0f) item.put("confidence", line.confidence.toDouble())
-                lines.put(item)
-                if (lines.length() >= 250) break
+    private fun recognizeScreenshot(bitmap: Bitmap): JSONObject = synchronized(ocrLock) {
+        val api = getOrCreateTesseract()
+        api.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
+        api.setImage(bitmap)
+        try {
+            val text = api.utf8Text.orEmpty().take(12000)
+            val lines = JSONArray()
+            val width = bitmap.width.coerceAtLeast(1)
+            val height = bitmap.height.coerceAtLeast(1)
+            val iterator = api.resultIterator
+            if (iterator != null) {
+                try {
+                    val level = TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE
+                    iterator.begin()
+                    do {
+                        val lineText = iterator.getUTF8Text(level)?.trim().orEmpty().take(160)
+                        if (lineText.isNotEmpty()) {
+                            val bounds = iterator.getBoundingRect(level)
+                            val item = JSONObject()
+                                .put("text", lineText)
+                                .put("bounds", JSONObject()
+                                    .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
+                                    .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
+                                    .put("right", (bounds.right * 10000 / width).coerceIn(0, 10000))
+                                    .put("bottom", (bounds.bottom * 10000 / height).coerceIn(0, 10000)))
+                            val confidence = iterator.confidence(level)
+                            if (confidence >= 0f) item.put("confidence", confidence.toDouble())
+                            lines.put(item)
+                        }
+                    } while (lines.length() < 250 && iterator.next(level))
+                } finally {
+                    iterator.delete()
+                }
             }
-            if (lines.length() >= 250) break
+
+            JSONObject()
+                .put("status", "ok")
+                .put("engine", "tesseract4android_5.5.1")
+                .put("language", "rus")
+                .put("processed_on_device", true)
+                .put("image_width", width)
+                .put("image_height", height)
+                .put("text", text)
+                .put("lines", lines)
+        } finally {
+            api.clear()
+        }
+    }
+
+    private fun getOrCreateTesseract(): TessBaseAPI {
+        tesseractApi?.let { return it }
+
+        val dataDirectory = File(filesDir, "tesseract")
+        val tessdataDirectory = File(dataDirectory, "tessdata")
+        if (!tessdataDirectory.exists() && !tessdataDirectory.mkdirs()) {
+            throw IllegalStateException("Cannot create private Tesseract data directory")
         }
 
-        return JSONObject()
-            .put("status", "ok")
-            .put("engine", "google_ml_kit_text_recognition_v2")
-            .put("processed_on_device", true)
-            .put("image_width", width)
-            .put("image_height", height)
-            .put("text", visionText.text.take(12000))
-            .put("lines", lines)
+        val russianModel = File(tessdataDirectory, "rus.traineddata")
+        assets.open("tessdata/rus.traineddata").use { input ->
+            FileOutputStream(russianModel, false).use { output -> input.copyTo(output) }
+        }
+        if (russianModel.length() < 1_000_000L) {
+            throw IllegalStateException("Russian Tesseract model is missing or incomplete")
+        }
+
+        val api = TessBaseAPI()
+        val initialized = runCatching {
+            api.init(dataDirectory.absolutePath, "rus", TessBaseAPI.OEM_LSTM_ONLY)
+        }.getOrDefault(false)
+        if (!initialized) {
+            api.recycle()
+            throw IllegalStateException("Tesseract initialization failed for rus.traineddata")
+        }
+        tesseractApi = api
+        return api
     }
 
     private fun tapMatchingNode(needle: String, description: Boolean): Boolean {
