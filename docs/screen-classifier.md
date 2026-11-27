@@ -2,6 +2,10 @@
 
 Status: **first conservative on-device classifier; observation only**.
 
+## OCR engine
+
+The Android worker uses Tesseract4Android 4.9.0 (Tesseract 5.5.1) with the Russian `tessdata_fast` model. The model is pinned to upstream commit `87416418657359cb625c412a48b6e1d6d41c29bd` and verified by SHA-256 `e16e5e036cce1d9ec2b00063cf8b54472625b9e14d893a169e2b0dedeb4df225` in GitHub Actions before APK assembly. It is copied to the app-private `files/tesseract/tessdata` directory and processed locally; screenshots are not sent to a remote OCR service. The current model targets the Russian game UI. English-language game UI is not yet covered by the bundled model.
+
 ## Integration
 
 `capture_ui` now adds `screen_classification` beside the existing OCR payload. The classifier runs locally from the OCR text and returns:
