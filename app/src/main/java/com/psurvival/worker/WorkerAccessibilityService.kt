@@ -218,8 +218,12 @@ class WorkerAccessibilityService : AccessibilityService() {
                 if (left < 0 || top < 0 || right <= left || bottom <= top) {
                     throw IllegalStateException("Invalid OCR word bounds: $needle")
                 }
-                val x = (left + right) / 2f * metrics.widthPixels / 10000f
-                val y = (top + bottom) / 2f * metrics.heightPixels / 10000f
+                val offsetX = step.optInt("offset_x_px", 0)
+                val offsetY = step.optInt("offset_y_px", 0)
+                val x = ((left + right) / 2f * metrics.widthPixels / 10000f + offsetX)
+                    .coerceIn(0f, (metrics.widthPixels - 1).toFloat())
+                val y = ((top + bottom) / 2f * metrics.heightPixels / 10000f + offsetY)
+                    .coerceIn(0f, (metrics.heightPixels - 1).toFloat())
                 if (!tapCoordinates(x, y)) throw IllegalStateException("OCR word tap failed: $needle")
             }
             "tap_description" -> {
