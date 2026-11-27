@@ -31,6 +31,7 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 | INT-13 | Network lost during job | Lease/retry behavior does not silently mark success | Events + queue state |
 | INT-14 | Accessibility service disabled | No claim/execution; user can diagnose locally | Device observation |
 | INT-15 | Phone screen locked / app process restarted | Behavior documented; no claim of unattended reliability without testing | Device observation |
+| INT-16 | `assert_screen` expects the current screen category | Matching category allows the next step; `unknown` or a different category fails the job before the next UI action and returns the captured evidence | Worker job result + device screen |
 
 ## Common fault isolation
 
