@@ -25,7 +25,7 @@ export function validateDailyStepsPayload(value: unknown): string | null {
         if (typeof item.text !== "string" || !item.text.trim() || item.text.length > 120) return `Шаг ${index + 1}: нужен text длиной до 120 символов.`;
         break;
       case "tap_ocr_word":
-        if (typeof item.text !== "string" || !item.text.trim() || item.text.length > 120 || /\\s/.test(item.text.trim())) {
+        if (typeof item.text !== "string" || !item.text.trim() || item.text.length > 120 || /\s/.test(item.text.trim())) {
           return `Шаг ${index + 1}: tap_ocr_word требует одно слово длиной до 120 символов.`;
         }
         break;
@@ -56,7 +56,7 @@ export function validateDailyStepsPayload(value: unknown): string | null {
         if (item.duration_ms !== undefined && (!Number.isInteger(item.duration_ms) || (item.duration_ms as number) < 100 || (item.duration_ms as number) > 10000)) return `Шаг ${index + 1}: duration_ms должен быть 100–10000.`;
         break;
       case "launch_app":
-        if (typeof item.package_name !== "string" || !/^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$/.test(item.package_name)) {
+        if (typeof item.package_name !== "string" || !/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(item.package_name)) {
           return `Шаг ${index + 1}: package_name должен быть идентификатором Android-пакета.`;
         }
         break;
