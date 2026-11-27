@@ -11,6 +11,16 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesCityFromNoisyRussianTesseractOutput() {
+        val result = GameScreenClassifier.classify(
+            "743к 1.90м 700к 491к Сторожевая Башня Стройка " +
+                "Штаб-Квартира Лагерь Стрелков Лагерь Наездников Лагерь Бойцов " +
+                "Транспортный Завод Улучшите Лагерь Стрелков до 16-го Ур."
+        )
+        assertEquals("city", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun recognizesCityFromActualMlKitOcrGlyphConfusions() {
         val result = GameScreenClassifier.classify(
             "CTpoMKa (0/1) Hayka (0/1) Jlarepb 5oňLLOB " +
@@ -46,6 +56,18 @@ class GameScreenClassifierTest {
                 "Улучшите Лагерь Стрелков до 16-го Ур. Битва Пройти 110 стадию " +
                 "Главного Испытания Охота Одолейте 3 Зомби 5-го Ур. Война " +
                 "Обучите Бойца Прирост Имейте в наличии 3 героев 211-го Ур. Экономика Соберите Еду"
+        )
+        assertEquals("quests", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
+    @Test fun recognizesQuestFromNoisyRussianTesseractOutput() {
+        val result = GameScreenClassifier.classify(
+            "Основной Суточный Активность ИлЕянса Рекомендация " +
+                "Улучшите Лагерь Стрелков до 16-го Ур. Битва " +
+                "Пройти 110 стадию Главного испытания Охота " +
+                "Одолейте 3 Зомби 5-го Ур. Война Обучите Бойца " +
+                "Прирост Имейте в наличии 3 героев 211-го Ур. Экономика Соберите Еду"
         )
         assertEquals("quests", result.getString("category"))
         assertFalse(result.getBoolean("actionable"))
