@@ -7,15 +7,14 @@ import android.graphics.Path
 import android.graphics.Bitmap
 import android.view.Display
 import android.os.Build
-import com.google.android.gms.tasks.Tasks
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.googlecode.tesseract.android.TessBaseAPI
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.CountDownLatch
@@ -27,7 +26,8 @@ import java.util.concurrent.atomic.AtomicReference
 class WorkerAccessibilityService : AccessibilityService() {
     private val executor = Executors.newScheduledThreadPool(2)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val textRecognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+    private val ocrLock = Any()
+    @Volatile private var tesseractApi: TessBaseAPI? = null
     @Volatile private var activeJobId: String? = null
     @Volatile private var lastHeartbeatAt = 0L
     private val capturedUiSnapshots = mutableListOf<JSONObject>()
@@ -102,7 +102,10 @@ class WorkerAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         executor.shutdownNow()
-        runCatching { textRecognizer.close() }
+        synchronized(ocrLock) {
+            runCatching { tesseractApi?.recycle() }
+            tesseractApi = null
+        }
         super.onDestroy()
     }
 
@@ -181,6 +184,57 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val needle = step.optString("text").trim()
                 if (needle.isEmpty() || !tapMatchingNode(needle, false)) throw IllegalStateException("Не найден кликабельный текст: $needle")
             }
+            "tap_ocr_word" -> {
+                val needle = step.optString("text").trim()
+                val normalizedNeedle = needle.lowercase(java.util.Locale.ROOT).filter { it.isLetterOrDigit() }
+                if (normalizedNeedle.isEmpty() || needle.any { it.isWhitespace() }) {
+                    throw IllegalArgumentException("tap_ocr_word requires one word in text")
+                }
+                val snapshot = captureGameUiSnapshot()
+                capturedUiSnapshots.add(snapshot)
+                val words = snapshot.optJSONObject("screenshot_ocr")?.optJSONArray("words")
+                    ?: throw IllegalStateException("OCR word boxes are unavailable")
+                val matches = (0 until words.length()).mapNotNull { index ->
+                    words.optJSONObject(index)?.takeIf { item ->
+                        item.optString("text").lowercase(java.util.Locale.ROOT)
+                            .filter { it.isLetterOrDigit() } == normalizedNeedle
+                    }
+                }
+                if (matches.size != 1) {
+                    throw IllegalStateException("OCR word match must be unique: $needle (matches=${matches.size})")
+                }
+                val match = matches.single()
+                val confidence = match.optDouble("confidence", -1.0)
+                if (confidence < 55.0) {
+                    throw IllegalStateException("OCR confidence too low for tap: $needle ($confidence)")
+                }
+                val bounds = match.optJSONObject("bounds")
+                    ?: throw IllegalStateException("OCR word has no bounding box: $needle")
+                val metrics = resources.displayMetrics
+                val left = bounds.optInt("left", -1)
+                val top = bounds.optInt("top", -1)
+                val right = bounds.optInt("right", -1)
+                val bottom = bounds.optInt("bottom", -1)
+                if (left < 0 || top < 0 || right <= left || bottom <= top) {
+                    throw IllegalStateException("Invalid OCR word bounds: $needle")
+                }
+                val offsetX = step.optInt("offset_x_px", 0)
+                val offsetY = step.optInt("offset_y_px", 0)
+                val x = ((left + right) / 2f * metrics.widthPixels / 10000f + offsetX)
+                    .coerceIn(0f, (metrics.widthPixels - 1).toFloat())
+                val y = ((top + bottom) / 2f * metrics.heightPixels / 10000f + offsetY)
+                    .coerceIn(0f, (metrics.heightPixels - 1).toFloat())
+                val windowBounds = snapshot.optJSONObject("window_bounds")
+                    ?: throw IllegalStateException("Active game window bounds are unavailable")
+                val windowLeft = windowBounds.optInt("left", 0)
+                val windowTop = windowBounds.optInt("top", 0)
+                val windowRight = windowBounds.optInt("right", 0)
+                val windowBottom = windowBounds.optInt("bottom", 0)
+                if (x < windowLeft || x >= windowRight || y < windowTop || y >= windowBottom) {
+                    throw IllegalStateException("OCR target is outside the interactive game window: $needle")
+                }
+                if (!tapCoordinates(x, y)) throw IllegalStateException("OCR word tap failed: $needle")
+            }
             "tap_description" -> {
                 val needle = step.optString("description").trim()
                 if (needle.isEmpty() || !tapMatchingNode(needle, true)) throw IllegalStateException("Не найдено описание: $needle")
@@ -232,6 +286,21 @@ class WorkerAccessibilityService : AccessibilityService() {
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(launch)
             }
+            "assert_screen" -> {
+                val expected = step.optString("category").trim().lowercase(java.util.Locale.ROOT)
+                val allowed = setOf("city", "building", "quests", "map", "heroes", "alliance", "mail", "events", "battle")
+                if (expected !in allowed) {
+                    throw IllegalArgumentException("assert_screen category must be one of: ${allowed.joinToString()}")
+                }
+                val snapshot = captureGameUiSnapshot()
+                capturedUiSnapshots.add(snapshot)
+                val classification = snapshot.optJSONObject("screen_classification")
+                val actual = classification?.optString("category", "unknown") ?: "unknown"
+                if (actual != expected) {
+                    val reason = classification?.optString("reason", "classification_missing") ?: "classification_missing"
+                    throw IllegalStateException("Screen guard failed: expected=$expected actual=$actual reason=$reason")
+                }
+            }
             "capture_ui" -> {
                 capturedUiSnapshots.add(captureGameUiSnapshot())
             }
@@ -250,6 +319,8 @@ class WorkerAccessibilityService : AccessibilityService() {
     private fun captureGameUiSnapshot(): JSONObject {
         val root = rootInActiveWindow ?: throw IllegalStateException("Нет активного окна для capture_ui")
         val activePackage = root.packageName?.toString().orEmpty()
+        val windowBounds = android.graphics.Rect()
+        root.getBoundsInScreen(windowBounds)
         val prefs = getSharedPreferences("worker", MODE_PRIVATE)
         val selectedPackage = prefs.getString("selected_game_package", "com.global.ztmslg")
             .orEmpty().ifBlank { "com.global.ztmslg" }
@@ -306,12 +377,22 @@ class WorkerAccessibilityService : AccessibilityService() {
             }
         }
 
+        val screenClassification = GameScreenClassifier.classify(
+            if (ocr.optString("status") == "ok") ocr.optString("text") else ""
+        )
+
         return JSONObject()
             .put("package_name", activePackage)
+            .put("window_bounds", JSONObject()
+                .put("left", windowBounds.left)
+                .put("top", windowBounds.top)
+                .put("right", windowBounds.right)
+                .put("bottom", windowBounds.bottom))
             .put("captured_at_ms", System.currentTimeMillis())
             .put("node_count", visited)
             .put("labels", labels)
             .put("screenshot_ocr", ocr)
+            .put("screen_classification", screenClassification)
             .put("note", if (labels.length() == 0 && ocr.optString("status") != "ok") {
                 "No accessibility labels and screenshot OCR unavailable; Unity-rendered UI may not be readable."
             } else "")
@@ -357,38 +438,93 @@ class WorkerAccessibilityService : AccessibilityService() {
         return result.get() ?: throw IllegalStateException(failure.get() ?: "Screenshot bitmap is empty")
     }
 
-    private fun recognizeScreenshot(bitmap: Bitmap): JSONObject {
-        val inputImage = InputImage.fromBitmap(bitmap, 0)
-        val visionText = Tasks.await(textRecognizer.process(inputImage), 15, TimeUnit.SECONDS)
-        val lines = JSONArray()
-        val width = bitmap.width.coerceAtLeast(1)
-        val height = bitmap.height.coerceAtLeast(1)
+    private fun recognizeScreenshot(bitmap: Bitmap): JSONObject = synchronized(ocrLock) {
+        val api = getOrCreateTesseract()
+        api.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
+        api.setImage(bitmap)
+        try {
+            val text = api.getUTF8Text().orEmpty().take(12000)
+            val width = bitmap.width.coerceAtLeast(1)
+            val height = bitmap.height.coerceAtLeast(1)
+            val lines = extractOcrItems(api, TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE, width, height, 250)
+            val words = extractOcrItems(api, TessBaseAPI.PageIteratorLevel.RIL_WORD, width, height, 500)
 
-        for (block in visionText.textBlocks) {
-            for (line in block.lines) {
-                val bounds = line.boundingBox ?: continue
-                val item = JSONObject()
-                    .put("text", line.text.take(160))
-                    .put("bounds", JSONObject()
-                        .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
-                        .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
-                        .put("right", (bounds.right * 10000 / width).coerceIn(0, 10000))
-                        .put("bottom", (bounds.bottom * 10000 / height).coerceIn(0, 10000)))
-                if (line.confidence >= 0f) item.put("confidence", line.confidence.toDouble())
-                lines.put(item)
-                if (lines.length() >= 250) break
-            }
-            if (lines.length() >= 250) break
+            JSONObject()
+                .put("status", "ok")
+                .put("engine", "tesseract4android_5.5.1")
+                .put("language", "rus")
+                .put("page_segmentation", "single_block")
+                .put("processed_on_device", true)
+                .put("image_width", width)
+                .put("image_height", height)
+                .put("text", text)
+                .put("lines", lines)
+                .put("words", words)
+        } finally {
+            api.clear()
+        }
+    }
+
+    private fun extractOcrItems(
+        api: TessBaseAPI,
+        level: Int,
+        width: Int,
+        height: Int,
+        limit: Int
+    ): JSONArray {
+        val items = JSONArray()
+        val iterator = api.getResultIterator() ?: return items
+        try {
+            iterator.begin()
+            do {
+                val itemText = iterator.getUTF8Text(level)?.trim().orEmpty().take(160)
+                if (itemText.isNotEmpty()) {
+                    val bounds = iterator.getBoundingRect(level)
+                    val item = JSONObject()
+                        .put("text", itemText)
+                        .put("bounds", JSONObject()
+                            .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
+                            .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
+                            .put("right", (bounds.right * 10000 / width).coerceIn(0, 10000))
+                            .put("bottom", (bounds.bottom * 10000 / height).coerceIn(0, 10000)))
+                    val confidence = iterator.confidence(level)
+                    if (confidence >= 0f) item.put("confidence", confidence.toDouble())
+                    items.put(item)
+                }
+            } while (items.length() < limit && iterator.next(level))
+        } finally {
+            iterator.delete()
+        }
+        return items
+    }
+
+    private fun getOrCreateTesseract(): TessBaseAPI {
+        tesseractApi?.let { return it }
+
+        val dataDirectory = File(filesDir, "tesseract")
+        val tessdataDirectory = File(dataDirectory, "tessdata")
+        if (!tessdataDirectory.exists() && !tessdataDirectory.mkdirs()) {
+            throw IllegalStateException("Cannot create private Tesseract data directory")
         }
 
-        return JSONObject()
-            .put("status", "ok")
-            .put("engine", "google_ml_kit_text_recognition_v2")
-            .put("processed_on_device", true)
-            .put("image_width", width)
-            .put("image_height", height)
-            .put("text", visionText.text.take(12000))
-            .put("lines", lines)
+        val russianModel = File(tessdataDirectory, "rus.traineddata")
+        assets.open("tessdata/rus.traineddata").use { input ->
+            FileOutputStream(russianModel, false).use { output -> input.copyTo(output) }
+        }
+        if (russianModel.length() < 1_000_000L) {
+            throw IllegalStateException("Russian Tesseract model is missing or incomplete")
+        }
+
+        val api = TessBaseAPI()
+        val initialized = runCatching {
+            api.init(dataDirectory.absolutePath, "rus", TessBaseAPI.OEM_LSTM_ONLY)
+        }.getOrDefault(false)
+        if (!initialized) {
+            api.recycle()
+            throw IllegalStateException("Tesseract initialization failed for rus.traineddata")
+        }
+        tesseractApi = api
+        return api
     }
 
     private fun tapMatchingNode(needle: String, description: Boolean): Boolean {

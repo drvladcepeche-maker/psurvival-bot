@@ -18,10 +18,12 @@ The current worker accepts:
 - `wait`: `{"type":"wait","duration_ms":3000}`
 - `tap_text`: exact/partial visible accessibility text, e.g. `{"type":"tap_text","text":"Daily"}`
 - `tap_description`: content description, e.g. `{"type":"tap_description","description":"Close"}`
-- `tap_coordinates`: physical screen coordinates in pixels, e.g. `{"type":"tap_coordinates","x":540,"y":1800}` (must be calibrated for the device; do not copy coordinates between resolutions)
+- `tap_coordinates`: physical screen coordinates in pixels, e.g. `{"type":"tap_coordinates","x":360,"y":750}` (must be calibrated for the device; do not copy coordinates between resolutions)
 - `back`: Android Back action.
+- `assert_screen`: capture the current game UI, run on-device OCR/classification, and stop the job unless the detected category exactly matches the expected value, e.g. `{"type":"assert_screen","category":"city"}`. Allowed categories: `city`, `building`, `quests`, `map`, `heroes`, `alliance`, `mail`, `events`, `battle`. The screen snapshot and classifier evidence are returned with the job result. This guard does not prove an individual button/action succeeded; it prevents the next step from running when the expected screen is not detected.
+- `tap_ocr_word`: find one unique exact OCR word with confidence ≥55 and tap its bounding-box center; optional `offset_x_px` / `offset_y_px` calibrate the tap relative to the word. The final target must remain inside the active game window bounds captured with the screenshot; taps into Android system bars are rejected. Multiword selectors, ambiguous matches, missing boxes, low-confidence words, and out-of-window targets fail closed.
 
-Each scenario must stop on an unexpected screen rather than blindly continue. The present executor cannot yet detect a specific screen or verify that a game action succeeded; use short scenarios and confirm outcomes manually.
+Each scenario must stop on an unexpected screen rather than blindly continue. The executor can assert a coarse screen category and capture OCR evidence, but it cannot yet prove that a specific game action succeeded; use short scenarios and confirm outcomes manually.
 
 ## Scenario 0 — connectivity smoke test
 
@@ -30,13 +32,14 @@ Use first after installing the APK, saving the Worker ID/token, and enabling the
 ```json
 [
   {"type":"launch_app","package_name":"com.global.ztmslg"},
-  {"type":"wait","duration_ms":5000}
+  {"type":"wait","duration_ms":8000},
+  {"type":"assert_screen","category":"city"}
 ]
 ```
 
 Telegram setup:
 1. In a private chat, run `/register_worker` and save the token in P&S Worker.
-2. Set the routine with `/set daily_steps [{"type":"launch_app","package_name":"com.global.ztmslg"},{"type":"wait","duration_ms":5000}]`
+2. Set the routine with `/set daily_steps [{"type":"launch_app","package_name":"com.global.ztmslg"},{"type":"wait","duration_ms":8000},{"type":"assert_screen","category":"city"},{"type":"capture_ui"}]`
 3. Run `/daily`, then `/tasks`.
 4. Confirm the game opens on the phone and the task becomes `succeeded`. If it remains queued, check worker registration/network/service status. If it fails, inspect the task's `last_error`.
 
@@ -51,20 +54,30 @@ Telegram setup:
 
 Use this as the prerequisite for every other routine. The delay is a starting value; adjust it after observing startup/login time. Do not automate login credentials. If the game shows a login, update, permission, or purchase screen, complete it manually and rerun the smoke test.
 
-## Scenario 2 — daily-task screen inspection (semi-automatic)
 
-Template only. Replace `Daily` with the exact accessible label shown on the current game build. Do not enable unattended repetition until each step is verified.
+Current device note: on the Redmi 10C, the visible bottom `Квесты` label is outside the Unity accessibility window bounds (`[0,0][720,1507]` on a 720×1650 display). Do not automate that tab until the system-bar/window-inset behavior is resolved. The smoke scenario therefore stops after a verified city capture; the quest-screen classifier is validated from a manually opened screen, not yet from an automated navigation sequence.
+
+## Scenario 2 — inspect the main-quest target building (read-only)
+
+This read-only scenario follows the visible main-task card to its highlighted building, opens the building menu, and reads the building-details screen. It deliberately stops before any upgrade action.
 
 ```json
 [
   {"type":"launch_app","package_name":"com.global.ztmslg"},
   {"type":"wait","duration_ms":8000},
-  {"type":"tap_text","text":"Daily"},
-  {"type":"wait","duration_ms":1500}
+  {"type":"assert_screen","category":"city"},
+  {"type":"tap_ocr_word","text":"Улучшите"},
+  {"type":"wait","duration_ms":800},
+  {"type":"tap_coordinates","x":360,"y":430},
+  {"type":"wait","duration_ms":800},
+  {"type":"tap_ocr_word","text":"Детали"},
+  {"type":"wait","duration_ms":1000},
+  {"type":"assert_screen","category":"building"},
+  {"type":"capture_ui"}
 ]
 ```
 
-Expected outcome: the daily-task screen is opened for inspection. This does **not** claim to collect rewards or complete tasks. If the tap fails, capture the visible screen and accessibility labels, then update the selector rather than guessing coordinates.
+Expected outcome: the game highlights the task target, opens the building menu, and returns a `building` classification on the details screen. No `Улучшить` button is pressed; no resources, speedups, or diamonds are spent. The coordinate is calibrated only for Redmi 10C at 720×1650 and must not be reused on another device or resolution. This sequence has been manually observed through ADB; execution through Worker 0.1.3 remains pending installation.
 
 ## Scenario 3 — resource gathering preparation (manual confirmation required)
 

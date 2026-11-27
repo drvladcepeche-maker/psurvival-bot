@@ -11,8 +11,8 @@ android {
         applicationId = "com.psurvival.worker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 4
+        versionName = "0.1.3"
     }
 
     compileOptions {
@@ -26,5 +26,7 @@ android {
 }
 
 dependencies {
-    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

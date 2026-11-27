@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/game-screen-ocr
+      - feature/game-screen-classifier
   pull_request:
     branches:
       - main
@@ -26,8 +27,16 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Download Russian OCR data
+        run: |
+          mkdir -p app/src/main/assets/tessdata
+          curl -fL --retry 3 --connect-timeout 30 \
+            https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/rus.traineddata \
+            -o app/src/main/assets/tessdata/rus.traineddata
+          echo "e16e5e036cce1d9ec2b00063cf8b54472625b9e14d893a169e2b0dedeb4df225  app/src/main/assets/tessdata/rus.traineddata" | sha256sum --check -
+
       - name: Assemble debug APK
-        run: gradle :app:assembleDebug
+        run: gradle :app:testDebugUnitTest :app:assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

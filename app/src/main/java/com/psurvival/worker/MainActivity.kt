@@ -87,7 +87,7 @@ class MainActivity : Activity() {
         }, matchWidth())
 
         gameTargetSpinner = Spinner(this)
-        gameTargets = discoverGameTargets()
+        gameTargets = discoverGameTargets().toMutableList()
         gameAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, gameTargets).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
@@ -111,9 +111,10 @@ class MainActivity : Activity() {
             text = "Обновить список оригинала и клона"
             setOnClickListener {
                 val previous = selectedGamePackage()
-                gameTargets = discoverGameTargets()
+                val refreshedTargets = discoverGameTargets()
                 gameAdapter.clear()
-                gameAdapter.addAll(gameTargets)
+                gameAdapter.addAll(refreshedTargets)
+                gameTargets = refreshedTargets
                 val index = gameTargets.indexOfFirst { it.packageName == previous }
                     .takeIf { it >= 0 }
                     ?: gameTargets.indexOfFirst { it.packageName == defaultGamePackage }.coerceAtLeast(0)
