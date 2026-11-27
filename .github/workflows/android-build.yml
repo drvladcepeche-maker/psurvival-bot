@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/game-screen-ocr
+      - feature/game-screen-classifier
   pull_request:
     branches:
       - main
