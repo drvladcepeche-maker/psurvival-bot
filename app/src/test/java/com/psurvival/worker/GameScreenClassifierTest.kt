@@ -40,6 +40,17 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesTheObservedRussianQuestScreen() {
+        val result = GameScreenClassifier.classify(
+            "Квест Основной Квест Суточный Квест Активность Альянса Рекомендация " +
+                "Улучшите Лагерь Стрелков до 16-го Ур. Битва Пройти 110 стадию " +
+                "Главного Испытания Охота Одолейте 3 Зомби 5-го Ур. Война " +
+                "Обучите Бойца Прирост Имейте в наличии 3 героев 211-го Ур. Экономика Соберите Еду"
+        )
+        assertEquals("quests", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun leavesScarlettPurchaseOfferUnknown() {
         val result = GameScreenClassifier.classify(
             "Набор Скарлетт 3 дня Макс эффект Скорость строительства " +
