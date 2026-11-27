@@ -232,6 +232,21 @@ class WorkerAccessibilityService : AccessibilityService() {
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(launch)
             }
+            "assert_screen" -> {
+                val expected = step.optString("category").trim().lowercase(java.util.Locale.ROOT)
+                val allowed = setOf("city", "quests", "map", "heroes", "alliance", "mail", "events", "battle")
+                if (expected !in allowed) {
+                    throw IllegalArgumentException("assert_screen category must be one of: ${allowed.joinToString()}")
+                }
+                val snapshot = captureGameUiSnapshot()
+                capturedUiSnapshots.add(snapshot)
+                val classification = snapshot.optJSONObject("screen_classification")
+                val actual = classification?.optString("category", "unknown") ?: "unknown"
+                if (actual != expected) {
+                    val reason = classification?.optString("reason", "classification_missing") ?: "classification_missing"
+                    throw IllegalStateException("Screen guard failed: expected=$expected actual=$actual reason=$reason")
+                }
+            }
             "capture_ui" -> {
                 capturedUiSnapshots.add(captureGameUiSnapshot())
             }
