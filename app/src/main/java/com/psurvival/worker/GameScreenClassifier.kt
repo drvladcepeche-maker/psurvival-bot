@@ -14,7 +14,7 @@ internal object GameScreenClassifier {
 
     private val rules = listOf(
         Rule("city", listOf("стро", "стром", "улучш", "казарм", "склад", "ферм", "завод", "лагер", "стрелков", "стрепк", "наук", "транспорт", "лаборатор", "штаб-квартир", "база", "город", "building", "upgrade", "barracks", "warehouse", "farm", "headquarters"), 3),
-        Rule("quests", listOf("задан", "ежеднев", "награ", "мисси", "активност", "получить", "daily", "quest", "mission", "claim reward"), 4),
+        Rule("quests", listOf("квест", "основной квест", "суточный квест", "активность альянса", "рекомендация", "задан", "ежеднев", "награ", "мисси", "активност", "получить", "daily", "quest", "mission", "claim reward"), 4),
         Rule("map", listOf("мир", "карта", "координат", "ресурсная точка", "сбор", "пустош", "world", "map", "gather", "march"), 4),
         Rule("heroes", listOf("геро", "оскол", "навык", "формац", "звезд", "heroes", "hero", "shards", "formation", "skill"), 4),
         Rule("alliance", listOf("альянс", "участник", "помощь альянса", "технолог", "донат альянса", "rally", "alliance", "members"), 4),
