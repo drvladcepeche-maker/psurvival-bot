@@ -21,6 +21,7 @@ The current worker accepts:
 - `tap_coordinates`: physical screen coordinates in pixels, e.g. `{"type":"tap_coordinates","x":540,"y":1800}` (must be calibrated for the device; do not copy coordinates between resolutions)
 - `back`: Android Back action.
 - `assert_screen`: capture the current game UI, run on-device OCR/classification, and stop the job unless the detected category exactly matches the expected value, e.g. `{"type":"assert_screen","category":"city"}`. Allowed categories: `city`, `quests`, `map`, `heroes`, `alliance`, `mail`, `events`, `battle`. The screen snapshot and classifier evidence are returned with the job result. This guard does not prove an individual button/action succeeded; it prevents the next step from running when the expected screen is not detected.
+- `tap_ocr_word`: find one unique exact OCR word with confidence ≥55 and tap its bounding-box center; optional `offset_x_px` / `offset_y_px` calibrate the tap relative to the word (useful when the clickable icon sits above its label). Example: `{"type":"tap_ocr_word","text":"Квесты","offset_y_px":-65}`. Multiword selectors, ambiguous matches, missing boxes, and low-confidence words fail closed.
 
 Each scenario must stop on an unexpected screen rather than blindly continue. The present executor cannot yet detect a specific screen or verify that a game action succeeded; use short scenarios and confirm outcomes manually.
 
@@ -62,7 +63,7 @@ Template only. Replace `Daily` with the exact accessible label shown on the curr
   {"type":"launch_app","package_name":"com.global.ztmslg"},
   {"type":"wait","duration_ms":8000},
   {"type":"assert_screen","category":"city"},
-  {"type":"tap_text","text":"Квесты"},
+  {"type":"tap_ocr_word","text":"Квесты","offset_y_px":-65},
   {"type":"wait","duration_ms":1500},
   {"type":"assert_screen","category":"quests"}
 ]
