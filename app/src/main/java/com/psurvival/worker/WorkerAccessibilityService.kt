@@ -306,12 +306,17 @@ class WorkerAccessibilityService : AccessibilityService() {
             }
         }
 
+        val screenClassification = GameScreenClassifier.classify(
+            if (ocr.optString("status") == "ok") ocr.optString("text") else ""
+        )
+
         return JSONObject()
             .put("package_name", activePackage)
             .put("captured_at_ms", System.currentTimeMillis())
             .put("node_count", visited)
             .put("labels", labels)
             .put("screenshot_ocr", ocr)
+            .put("screen_classification", screenClassification)
             .put("note", if (labels.length() == 0 && ocr.optString("status") != "ok") {
                 "No accessibility labels and screenshot OCR unavailable; Unity-rendered UI may not be readable."
             } else "")
