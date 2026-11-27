@@ -27,4 +27,4 @@ This is a keyword baseline, not a trained visual model. OCR typos, language chan
 
 ## Validation
 
-Unit tests cover Russian city labels observed on the Redmi 10C, English map labels, unknown numeric/resource-only text, and empty OCR. Live-device validation should compare the classifier output with the actual screen before any action layer is considered.
+Unit tests cover Russian city labels observed on the Redmi 10C, the observed Russian quest screen (including `Основной Квест`, `Суточный Квест`, and `Активность Альянса`), an in-game Scarlett purchase offer that must remain `unknown`, English map labels, unknown numeric/resource-only text, and empty OCR. Live-device validation should compare the classifier output with the actual screen before any action layer is considered.
