@@ -31,7 +31,8 @@ Use first after installing the APK, saving the Worker ID/token, and enabling the
 ```json
 [
   {"type":"launch_app","package_name":"com.global.ztmslg"},
-  {"type":"wait","duration_ms":5000}
+  {"type":"wait","duration_ms":8000},
+  {"type":"assert_screen","category":"city"}
 ]
 ```
 
@@ -60,8 +61,10 @@ Template only. Replace `Daily` with the exact accessible label shown on the curr
 [
   {"type":"launch_app","package_name":"com.global.ztmslg"},
   {"type":"wait","duration_ms":8000},
-  {"type":"tap_text","text":"Daily"},
-  {"type":"wait","duration_ms":1500}
+  {"type":"assert_screen","category":"city"},
+  {"type":"tap_text","text":"Квесты"},
+  {"type":"wait","duration_ms":1500},
+  {"type":"assert_screen","category":"quests"}
 ]
 ```
 
