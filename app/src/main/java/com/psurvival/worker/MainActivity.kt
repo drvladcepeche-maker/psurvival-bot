@@ -30,7 +30,10 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var gameTargetSpinner: Spinner
     private lateinit var gameAdapter: ArrayAdapter<GameTarget>
-    private var gameTargets: List<GameTarget> = emptyList()
+    // Keep one mutable backing list for the lifetime of ArrayAdapter. Replacing the
+    // list reference leaves the adapter attached to stale data; ArrayAdapter.clear()
+    // can also fail when its backing collection is not mutable.
+    private val gameTargets = mutableListOf<GameTarget>()
 
     private val defaultGamePackage = "com.global.ztmslg"
     private var recordedStepsRefresh: (() -> Unit)? = null
@@ -87,7 +90,7 @@ class MainActivity : Activity() {
         }, matchWidth())
 
         gameTargetSpinner = Spinner(this)
-        gameTargets = discoverGameTargets().toMutableList()
+        gameTargets.addAll(discoverGameTargets())
         gameAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, gameTargets).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
@@ -112,9 +115,9 @@ class MainActivity : Activity() {
             setOnClickListener {
                 val previous = selectedGamePackage()
                 val refreshedTargets = discoverGameTargets()
-                gameAdapter.clear()
-                gameAdapter.addAll(refreshedTargets)
-                gameTargets = refreshedTargets
+                gameTargets.clear()
+                gameTargets.addAll(refreshedTargets)
+                gameAdapter.notifyDataSetChanged()
                 val index = gameTargets.indexOfFirst { it.packageName == previous }
                     .takeIf { it >= 0 }
                     ?: gameTargets.indexOfFirst { it.packageName == defaultGamePackage }.coerceAtLeast(0)
