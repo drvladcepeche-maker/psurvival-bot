@@ -184,6 +184,44 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val needle = step.optString("text").trim()
                 if (needle.isEmpty() || !tapMatchingNode(needle, false)) throw IllegalStateException("Не найден кликабельный текст: $needle")
             }
+            "tap_ocr_word" -> {
+                val needle = step.optString("text").trim()
+                val normalizedNeedle = needle.lowercase(java.util.Locale.ROOT).filter { it.isLetterOrDigit() }
+                if (normalizedNeedle.isEmpty() || normalizedNeedle.contains(" ")) {
+                    throw IllegalArgumentException("tap_ocr_word requires one word in text")
+                }
+                val snapshot = captureGameUiSnapshot()
+                capturedUiSnapshots.add(snapshot)
+                val words = snapshot.optJSONObject("screenshot_ocr")?.optJSONArray("words")
+                    ?: throw IllegalStateException("OCR word boxes are unavailable")
+                val matches = (0 until words.length()).mapNotNull { index ->
+                    words.optJSONObject(index)?.takeIf { item ->
+                        item.optString("text").lowercase(java.util.Locale.ROOT)
+                            .filter { it.isLetterOrDigit() } == normalizedNeedle
+                    }
+                }
+                if (matches.size != 1) {
+                    throw IllegalStateException("OCR word match must be unique: $needle (matches=${matches.size})")
+                }
+                val match = matches.single()
+                val confidence = match.optDouble("confidence", -1.0)
+                if (confidence < 55.0) {
+                    throw IllegalStateException("OCR confidence too low for tap: $needle ($confidence)")
+                }
+                val bounds = match.optJSONObject("bounds")
+                    ?: throw IllegalStateException("OCR word has no bounding box: $needle")
+                val metrics = resources.displayMetrics
+                val left = bounds.optInt("left", -1)
+                val top = bounds.optInt("top", -1)
+                val right = bounds.optInt("right", -1)
+                val bottom = bounds.optInt("bottom", -1)
+                if (left < 0 || top < 0 || right <= left || bottom <= top) {
+                    throw IllegalStateException("Invalid OCR word bounds: $needle")
+                }
+                val x = (left + right) / 2f * metrics.widthPixels / 10000f
+                val y = (top + bottom) / 2f * metrics.heightPixels / 10000f
+                if (!tapCoordinates(x, y)) throw IllegalStateException("OCR word tap failed: $needle")
+            }
             "tap_description" -> {
                 val needle = step.optString("description").trim()
                 if (needle.isEmpty() || !tapMatchingNode(needle, true)) throw IllegalStateException("Не найдено описание: $needle")
@@ -386,47 +424,58 @@ class WorkerAccessibilityService : AccessibilityService() {
         api.setImage(bitmap)
         try {
             val text = api.getUTF8Text().orEmpty().take(12000)
-            val lines = JSONArray()
             val width = bitmap.width.coerceAtLeast(1)
             val height = bitmap.height.coerceAtLeast(1)
-            val iterator = api.getResultIterator()
-            if (iterator != null) {
-                try {
-                    val level = TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE
-                    iterator.begin()
-                    do {
-                        val lineText = iterator.getUTF8Text(level)?.trim().orEmpty().take(160)
-                        if (lineText.isNotEmpty()) {
-                            val bounds = iterator.getBoundingRect(level)
-                            val item = JSONObject()
-                                .put("text", lineText)
-                                .put("bounds", JSONObject()
-                                    .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
-                                    .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
-                                    .put("right", (bounds.right * 10000 / width).coerceIn(0, 10000))
-                                    .put("bottom", (bounds.bottom * 10000 / height).coerceIn(0, 10000)))
-                            val confidence = iterator.confidence(level)
-                            if (confidence >= 0f) item.put("confidence", confidence.toDouble())
-                            lines.put(item)
-                        }
-                    } while (lines.length() < 250 && iterator.next(level))
-                } finally {
-                    iterator.delete()
-                }
-            }
+            val lines = extractOcrItems(api, TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE, width, height, 250)
+            val words = extractOcrItems(api, TessBaseAPI.PageIteratorLevel.RIL_WORD, width, height, 500)
 
             JSONObject()
                 .put("status", "ok")
                 .put("engine", "tesseract4android_5.5.1")
                 .put("language", "rus")
+                .put("page_segmentation", "single_block")
                 .put("processed_on_device", true)
                 .put("image_width", width)
                 .put("image_height", height)
                 .put("text", text)
                 .put("lines", lines)
+                .put("words", words)
         } finally {
             api.clear()
         }
+    }
+
+    private fun extractOcrItems(
+        api: TessBaseAPI,
+        level: Int,
+        width: Int,
+        height: Int,
+        limit: Int
+    ): JSONArray {
+        val items = JSONArray()
+        val iterator = api.getResultIterator() ?: return items
+        try {
+            iterator.begin()
+            do {
+                val itemText = iterator.getUTF8Text(level)?.trim().orEmpty().take(160)
+                if (itemText.isNotEmpty()) {
+                    val bounds = iterator.getBoundingRect(level)
+                    val item = JSONObject()
+                        .put("text", itemText)
+                        .put("bounds", JSONObject()
+                            .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
+                            .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
+                            .put("right", (bounds.right * 10000 / width).coerceIn(0, 10000))
+                            .put("bottom", (bounds.bottom * 10000 / height).coerceIn(0, 10000)))
+                    val confidence = iterator.confidence(level)
+                    if (confidence >= 0f) item.put("confidence", confidence.toDouble())
+                    items.put(item)
+                }
+            } while (items.length() < limit && iterator.next(level))
+        } finally {
+            iterator.delete()
+        }
+        return items
     }
 
     private fun getOrCreateTesseract(): TessBaseAPI {
