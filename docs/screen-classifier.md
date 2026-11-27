@@ -19,7 +19,7 @@ Status: **first conservative on-device classifier; observation only**.
 - The classifier does not click, select, launch, dispatch, spend, collect, or mutate game state.
 - A category is emitted only when the best score clears its category threshold and separates from the runner-up. Otherwise the result is `unknown`.
 - OCR confidence is not interpreted as semantic certainty.
-- No gameplay routine may use this field as authorization for an action. Any future action requires a separate expected-state guard, a calibrated target selector, and a post-action capture confirming the transition.
+- A gameplay routine must not treat a category as authorization by itself. The Android worker now supports an explicit `assert_screen` step: it captures the current game UI and stops the job unless the classifier returns the requested category. A routine still needs a calibrated target selector and a post-action capture confirming the transition; the guard only verifies the screen category.
 
 ## Known limitations
 
