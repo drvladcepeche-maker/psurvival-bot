@@ -10,6 +10,7 @@ import java.util.Locale
  */
 internal object GameScreenClassifier {
     private data class Rule(val category: String, val keywords: List<String>, val minScore: Int)
+    private data class ScoredRule(val rule: Rule, val matches: List<String>, val score: Int)
 
     private val rules = listOf(
         Rule("city", listOf("стро", "улучш", "казарм", "склад", "ферм", "завод", "лагер", "стрелков", "наук", "транспорт", "лаборатор", "штаб-квартир", "база", "город", "building", "upgrade", "barracks", "warehouse", "farm", "headquarters"), 4),
@@ -24,35 +25,40 @@ internal object GameScreenClassifier {
 
     fun classify(rawText: String): JSONObject {
         val normalized = normalize(rawText)
-        val scores = rules.map { rule ->
-            val matched = rule.keywords.filter { normalized.contains(normalize(it)) }
-            Triple(rule, matched, matched.sumOf { if (it.length >= 7) 2 else 1 })
-        }.sortedByDescending { it.third }
+        val scores: List<ScoredRule> = rules.map { rule ->
+            val matches = rule.keywords.filter { normalized.contains(normalize(it)) }
+            val score = matches.fold(0) { total, keyword -> total + if (keyword.length >= 7) 2 else 1 }
+            ScoredRule(rule, matches, score)
+        }.sortedByDescending { it.score }
 
         val best = scores.firstOrNull()
-        val secondScore = scores.getOrNull(1)?.third ?: 0
-        val accepted = best != null && best.third >= best.first.minScore && best.third - secondScore >= 1
+        val secondScore = scores.getOrNull(1)?.score ?: 0
+        val accepted = best != null &&
+            best.score >= best.rule.minScore &&
+            best.score - secondScore >= 1
+
         val result = JSONObject()
             .put("classifier", "pns_keyword_rules_v1")
-            .put("category", if (accepted) best!!.first.category else "unknown")
-            .put("confidence", if (accepted) confidence(best!!.third, secondScore) else 0.0)
+            .put("category", if (accepted) best!!.rule.category else "unknown")
+            .put("confidence", if (accepted) confidence(best!!.score, secondScore) else 0.0)
             .put("actionable", false)
             .put("reason", when {
                 normalized.isBlank() -> "empty_ocr_text"
-                best == null || best.third == 0 -> "no_matching_evidence"
+                best == null || best.score == 0 -> "no_matching_evidence"
                 !accepted -> "low_or_ambiguous_score"
                 else -> "matched_keywords"
             })
 
         val evidence = JSONArray()
-        if (best != null) best.second.forEach { evidence.put(it) }
+        best?.matches?.forEach { evidence.put(it) }
         result.put("evidence", evidence)
+
         val ranked = JSONArray()
-        scores.filter { it.third > 0 }.take(4).forEach { (rule, matched, score) ->
+        scores.filter { it.score > 0 }.take(4).forEach { scored ->
             ranked.put(JSONObject()
-                .put("category", rule.category)
-                .put("score", score)
-                .put("matches", JSONArray(matched)))
+                .put("category", scored.rule.category)
+                .put("score", scored.score)
+                .put("matches", JSONArray(scored.matches)))
         }
         result.put("alternatives", ranked)
         return result
@@ -61,6 +67,19 @@ internal object GameScreenClassifier {
     private fun normalize(value: String): String = value
         .lowercase(Locale.ROOT)
         .replace('ё', 'е')
+        // ML Kit often recognizes Cyrillic UI glyphs as visually similar Latin letters.
+        .replace('a', 'а')
+        .replace('b', 'в')
+        .replace('c', 'с')
+        .replace('e', 'е')
+        .replace('h', 'н')
+        .replace('k', 'к')
+        .replace('m', 'м')
+        .replace('o', 'о')
+        .replace('p', 'р')
+        .replace('t', 'т')
+        .replace('x', 'х')
+        .replace('y', 'у')
         .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
         .trim()
 
