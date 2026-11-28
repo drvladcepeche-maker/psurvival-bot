@@ -41,6 +41,18 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesCityWhenOnlySparsePassContainsMapLabels() {
+        val sparsePass = "Стройка. Наука Штаб Лагерь Стрелко Лагерь Наездн " +
+            "Бойц Улучшите Ла рь Стрелков до Ур. Почта"
+        val autoPass = "= 743к 41.90м 5 700к 4э1к пери 17 начал(а) " +
+            "групповую атаку на Логой Почта НОВ Е Ещё"
+
+        val result = GameScreenClassifier.classify("$sparsePass\\n$autoPass")
+
+        assertEquals("city", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun recognizesEnglishMapLabels() {
         val result = GameScreenClassifier.classify("World Map Gather March")
         assertEquals("map", result.getString("category"))
