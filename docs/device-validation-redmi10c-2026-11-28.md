@@ -81,3 +81,21 @@ A controlled job was executed while the Shooter Camp Details panel was open:
 The remaining table rows were OCR'd inconsistently (for example, isolated digits 2, 3, 5, 6, and 8); their meaning is not established. The `Эффект` value is also not reliably legible in these captures. Do not infer either field from this test.
 
 No UI gestures beyond read-only capture/guards were performed. No resources or premium currency were spent. The final queue check returned zero queued/running jobs.
+
+
+## Follow-up: dual-layout OCR acceptance — 2026-11-28
+
+The earlier validation above records the initial OCR build and its original navigation experiments. The run #192 dual-layout OCR build was installed later and independently passed the following acceptance checks:
+
+- APK identity: installed package SHA-256 `6796724a9698080bd88d0380414c3a7fe28a25c02befa05d6e235cf50f7b97ad`; package version 0.1.3 / versionCode 4.
+- Russian model: on-device `rus.traineddata` SHA-256 `e16e5e036cce1d9ec2b00063cf8b54472625b9e14d893a169e2b0dedeb4df225`.
+- Accessibility: `WorkerAccessibilityService` enabled and bound after the user re-confirmed MIUI's post-reinstall sensitive-permission warning.
+- Worker transport: fresh Supabase heartbeat and successful queue claim/complete cycle.
+- City screen: job `52b669ba-d69c-4b4d-aa33-c45170ee7d7d` completed successfully; `assert_screen(city)` passed at heuristic confidence 0.74 using merged OCR evidence from both layout passes.
+- Building details: job `a959ef18-a2f7-42bd-894c-9a23465c88de` completed successfully with four executed steps. The unique OCR target `Детали` was recognized at 95.82% confidence and tapped; subsequent snapshots classified `building` at confidence 0.92. A physical screenshot confirmed the `Данные здания` panel for `Лагерь Стрелков`.
+- Fail-closed behavior: the Scarlett purchase offer was classified `unknown` and dismissed using Android Back. An earlier low-confidence `Детали` OCR hit was rejected rather than tapped; no confidence threshold was lowered.
+- Safety: no purchase, upgrade, troop training, troop movement, battle, speedup, or resource expenditure occurred.
+
+CI run #192 (workflow run ID `46107260786`) passed both jobs: server validation and Android build/unit tests. This confirms the run #192 branch commit; the physical-device evidence above confirms the exact APK artifact installed from that run.
+
+Still unverified: multiple distinct OCR matches are rejected in all edge cases; screen-lock recovery; process-death/accessibility-service restart recovery; prolonged network-loss recovery; unrelated-app capture isolation; and OCR behavior on Android API 26–29. Do not treat these as passed release gates.
