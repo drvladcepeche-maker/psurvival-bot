@@ -23,7 +23,7 @@ On Android 10 / API 29 and lower, `capture_ui` continues to return Accessibility
 6. Validate the game-window bounds against the captured bitmap; reject empty, inverted, negative, or out-of-image bounds without clamping.
 7. Crop the in-memory bitmap to the game-window rectangle before ML Kit receives it.
 8. Run ML Kit Text Recognition locally on the cropped bitmap only.
-9. Return recognized text and line bounding boxes normalized to the cropped image coordinate space.
+9. Return recognized text from the cropped image while translating line bounding boxes back into the existing display-normalized 0–10000 coordinate space. The response records both display dimensions and OCR crop dimensions.
 10. Recycle both full-display and cropped bitmaps. No screenshot image is written to local storage.
 
 The screenshot bitmap is not sent to Supabase. The OCR text and line coordinates are included in the existing `capture_ui` result payload and therefore are sent to the configured Worker API when the job is completed. Keep this in mind when testing screens containing player names or chat text.
@@ -48,6 +48,9 @@ New field:
     "processed_on_device": true,
     "image_width": 1080,
     "image_height": 2400,
+    "ocr_crop_width": 1080,
+    "ocr_crop_height": 2200,
+    "coordinate_space": "display_normalized_0_10000",
     "text": "recognized screen text",
     "lines": [
       {
