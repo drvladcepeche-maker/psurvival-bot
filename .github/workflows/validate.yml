@@ -86,6 +86,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+      - name: Run Android unit tests
+        run: gradle --no-daemon :app:testDebugUnitTest
       - name: Build Android worker APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Upload debug APK
