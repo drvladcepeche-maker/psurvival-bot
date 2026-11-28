@@ -111,6 +111,9 @@ Deno.serve(async (req: Request) => {
       } else {
         const message = typeof body.error === "string" ? body.error.slice(0, 500) : "Worker reported failure";
         const retryable = body.retryable !== false;
+        const diagnostics = body.diagnostics && typeof body.diagnostics === "object" && !Array.isArray(body.diagnostics)
+          ? body.diagnostics as Record<string, unknown>
+          : null;
         const willRetry = retryable && current[0].attempts < current[0].max_attempts;
         const delaySeconds = Math.min(300, 15 * (2 ** Math.max(0, current[0].attempts - 1)));
         patch = {
@@ -121,9 +124,14 @@ Deno.serve(async (req: Request) => {
           updated_at: now.toISOString(),
           last_error: message,
           worker_id: null,
+          ...(diagnostics ? { result: diagnostics } : {}),
         };
         eventType = willRetry ? "retry_scheduled" : "failed";
-        details = { error: message, retry_delay_seconds: willRetry ? delaySeconds : 0 };
+        details = {
+          error: message,
+          retry_delay_seconds: willRetry ? delaySeconds : 0,
+          diagnostics_saved: diagnostics !== null,
+        };
       }
 
       const changed = await db<Array<{ id: string }>>(
