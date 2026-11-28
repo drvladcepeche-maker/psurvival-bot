@@ -30,6 +30,17 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesCityFromNoisyMultiBlockTesseractCapture() {
+        val result = GameScreenClassifier.classify(
+            "743к 1.90м 700к 491к 36/135 Стройка Наука " +
+                "Сторожевая Башня Лагерь Стрелков Лагерь Наездников Лагерь Бойцов " +
+                "Транспортный Завод Улучшите Лагерь Стрелков до 16-го Ур. " +
+                "Мир Герои Квесты Сумка Почта Альянс Ещё"
+        )
+        assertEquals("city", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun recognizesEnglishMapLabels() {
         val result = GameScreenClassifier.classify("World Map Gather March")
         assertEquals("map", result.getString("category"))
