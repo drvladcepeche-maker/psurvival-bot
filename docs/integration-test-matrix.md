@@ -1,6 +1,6 @@
 # Integration test matrix: Telegram → Supabase → Android worker → game
 
-This matrix distinguishes service health from a real end-to-end success. The Telegram `/status` roundtrip and the earlier Redmi 10C worker/game checks have been observed; the latest dual-layout OCR changes still require a live-device regression run.
+This matrix distinguishes service health from a real end-to-end success. The Telegram `/status` roundtrip and the latest dual-layout OCR Worker build have been observed on the Redmi 10C. INT-16, INT-17, and the Shooter Camp read-only path in INT-19 passed live validation on 2026-11-28; untested cases remain explicitly open.
 
 ## Components and contract
 
@@ -34,7 +34,7 @@ This matrix distinguishes service health from a real end-to-end success. The Tel
 | INT-16 | `assert_screen` expects the current screen category | Matching category allows the next step; `unknown` is recaptured up to three times with a 700 ms gap; a confidently different category fails immediately; persistent `unknown` fails closed | Worker job result + device screen |
 | INT-17 | `tap_ocr_word` targets a single visible word | Exactly one spatial word location with valid bounds is required. A single-pass hit needs confidence ≥55; a lower-confidence hit is accepted only when sparse-text and auto-layout passes independently identify the same word at overlapping boxes (max confidence ≥30, mean ≥35). Zero/multiple/unconfirmed matches fail without tapping | OCR snapshot + gesture result |
 | INT-18 | OCR word box falls outside the active Unity window | Worker rejects the tap before dispatching a gesture; Android system navigation receives no accidental game-worker tap | Snapshot `window_bounds` + job failure |
-| INT-19 | Headquarters building details screen | OCR/classifier returns `building`; the read-only inspection scenario reaches details without pressing `Улучшить` or spending resources | Worker OCR snapshot + screen guard |
+| INT-19 | Shooter Camp building details screen | OCR/classifier returns `building`; the read-only inspection reaches `Данные здания` without pressing `Улучшить` or spending resources | Worker job `a959ef18-a2f7-42bd-894c-9a23465c88de`, OCR snapshots, physical-device confirmation |
 | INT-20 | OCR step fails after capture | Job retains a bounded text-only diagnostic sample with OCR passes, confidence and word boxes; no screenshot image or unrelated app content is stored | Failed job `result` + event |
 
 ## Common fault isolation
@@ -51,7 +51,7 @@ This matrix distinguishes service health from a real end-to-end success. The Tel
 
 ## Current implementation caveats to verify
 
-- Android routine execution currently reports the configured step count as `executed_steps`; this is not a semantic verification of the game outcome.
+- `executed_steps` counts executor steps that ran; it is not semantic verification that a game-side action succeeded.
 - `tap_coordinates` values are interpreted as screen pixels by the Android client. Calibrate per display resolution/orientation.
 - The Android client now includes its configured Worker ID in API requests, and the server rejects a non-empty ID that does not match the authenticated token. Older clients that omit the field remain temporarily compatible; test INT-09a after deploying both updated components.
 - The Android service's current failure path can lose a failure-reporting error if the API is unavailable; inspect queue lease/retry state before assuming a job was handled.
@@ -59,4 +59,4 @@ This matrix distinguishes service health from a real end-to-end success. The Tel
 
 ## Release gate
 
-Do not label a build “working end-to-end” until INT-02, INT-05, INT-08, INT-10, INT-11 and the relevant OCR guards (INT-16 through INT-20) have been observed on the target device, with logs and screenshots redacted. Never place secrets in repository artifacts.
+Do not label the full gameplay product “working end-to-end” until all applicable integration cases are observed. The 2026-11-28 Redmi 10C evidence covers authenticated polling, queue execution, city/building guards, Russian OCR, and guarded OCR target selection; it does not cover screen-lock recovery, process-death recovery, network-loss recovery, ambiguous multiple-match rejection, or unrelated-app window isolation. Never place secrets in repository artifacts.
