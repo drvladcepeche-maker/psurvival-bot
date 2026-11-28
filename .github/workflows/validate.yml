@@ -19,6 +19,8 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - name: Install Deno dependencies
+        run: deno install
       - name: Type-check Edge Functions
         run: |
           deno check supabase/functions/telegram-bot/index.ts
