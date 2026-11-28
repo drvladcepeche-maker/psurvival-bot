@@ -83,6 +83,16 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesObservedShooterCampDetailsScreen() {
+        val result = GameScreenClassifier.classify(
+            "Данные здания Лагерь Стрелков Тут обучаются Стрелки " +
+                "Улучшите здание чтобы открыть более продвинутых юнитов " +
+                "Эффект Уровень Разблокирует Арбалетчик Пистолетчик Стрелец"
+        )
+        assertEquals("building", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun recognizesTheObservedRussianQuestScreen() {
         val result = GameScreenClassifier.classify(
             "Квест Основной Квест Суточный Квест Активность Альянса Рекомендация " +
