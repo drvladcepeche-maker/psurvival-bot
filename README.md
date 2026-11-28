@@ -1,6 +1,6 @@
 # Puzzles & Survival Telegram Bot — cloud prototype
 
-A Telegram bot backend with persistent Supabase profiles and task queue, a device-authenticated worker API, and an Android AccessibilityService worker. The Redmi 10C has Worker 0.1.3 installed and verified on-device: authenticated polling, city/building screen guards, Russian on-device OCR, OCR-target selection, and read-only building inspection have passed. The Telegram Edge Function is deployed, but its live Telegram API check currently returns HTTP 401; the bot token must be corrected before Telegram messaging is operational.
+A Telegram bot backend with persistent Supabase profiles and task queue, a device-authenticated worker API, and an Android AccessibilityService worker. The Redmi 10C has Worker 0.1.3 installed and verified on-device: authenticated polling, city/building screen guards, Russian on-device OCR, OCR-target selection, and read-only building inspection have passed. The Telegram Edge Function is deployed. On 2026-11-28, its live configuration check confirmed that Telegram accepts the stored bot token and that the expected webhook is registered (`configured=true`, `webhookRegistered=true`, `status=registered_and_verified`). A real private-chat message roundtrip is still required to verify end-to-end delivery and command handling.
 
 ## Architecture
 
