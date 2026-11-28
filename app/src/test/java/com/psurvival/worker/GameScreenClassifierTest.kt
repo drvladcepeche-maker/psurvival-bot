@@ -30,6 +30,29 @@ class GameScreenClassifierTest {
         assertFalse(result.getBoolean("actionable"))
     }
 
+    @Test fun recognizesCityFromNoisyMultiBlockTesseractCapture() {
+        val result = GameScreenClassifier.classify(
+            "743к 1.90м 700к 491к 36/135 Стройка Наука " +
+                "Сторожевая Башня Лагерь Стрелков Лагерь Наездников Лагерь Бойцов " +
+                "Транспортный Завод Улучшите Лагерь Стрелков до 16-го Ур. " +
+                "Мир Герои Квесты Сумка Почта Альянс Ещё"
+        )
+        assertEquals("city", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
+    @Test fun recognizesCityWhenOnlySparsePassContainsMapLabels() {
+        val sparsePass = "Стройка. Наука Штаб Лагерь Стрелко Лагерь Наездн " +
+            "Бойц Улучшите Ла рь Стрелков до Ур. Почта"
+        val autoPass = "= 743к 41.90м 5 700к 4э1к пери 17 начал(а) " +
+            "групповую атаку на Логой Почта НОВ Е Ещё"
+
+        val result = GameScreenClassifier.classify("$sparsePass\n$autoPass")
+
+        assertEquals("city", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
     @Test fun recognizesEnglishMapLabels() {
         val result = GameScreenClassifier.classify("World Map Gather March")
         assertEquals("map", result.getString("category"))
@@ -55,6 +78,16 @@ class GameScreenClassifierTest {
             "Данные здания Штаб-Квартира это ключевое здание для убежища " +
                 "Улучшите её чтобы открыть новые постройки и увеличить предельный уровень зданий " +
                 "Эффект Уровень Размер Отряда Вместимость Лазарета Разблокирует Откроет Кампанию"
+        )
+        assertEquals("building", result.getString("category"))
+        assertFalse(result.getBoolean("actionable"))
+    }
+
+    @Test fun recognizesObservedShooterCampDetailsScreen() {
+        val result = GameScreenClassifier.classify(
+            "Данные здания Лагерь Стрелков Тут обучаются Стрелки " +
+                "Улучшите здание чтобы открыть более продвинутых юнитов " +
+                "Эффект Уровень Разблокирует Арбалетчик Пистолетчик Стрелец"
         )
         assertEquals("building", result.getString("category"))
         assertFalse(result.getBoolean("actionable"))

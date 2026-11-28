@@ -1,6 +1,6 @@
 # Puzzles & Survival Telegram Bot — cloud prototype
 
-A Telegram bot backend with persistent Supabase profiles and task queue, a device-authenticated worker API, and an Android AccessibilityService worker prototype. The Android client can execute explicit UI steps supplied in a queued job; a ready-made game routine and physical-device test are not yet complete.
+A Telegram bot backend with persistent Supabase profiles and task queue, a device-authenticated worker API, and an Android AccessibilityService worker. The Redmi 10C has Worker 0.1.3 installed and verified on-device: authenticated polling, city/building screen guards, Russian on-device OCR, OCR-target selection, and read-only building inspection have passed. On 2026-11-28, a real `/status` message/reply roundtrip was verified through Telegram Desktop on the Pasha laptop; the Supabase profile timestamp matched the message time. The Telegram Edge Function is deployed and its webhook is registered. The latest branch build adds dual-layout OCR, conservative word-box consensus, screen-classification retries, and bounded failure diagnostics. This exact APK was installed and validated on the Redmi 10C on 2026-11-28, including city/building guards and guarded OCR selection.
 
 ## Architecture
 
@@ -72,7 +72,7 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 - Telegram user profiles are persisted in `psurvival_bot_profiles`; settings storage is ready for additional user-configurable fields.
 - `/daily` enqueues a durable `daily_routine` job with an idempotency key, so Telegram retries do not create duplicate tasks. Configure `daily_steps` first; otherwise the executor marks the job as unconfigured rather than pretending it ran.
 - `/tasks` reads the most recent tasks from Supabase.
-- `/register_worker` issues a private-chat worker token; `/rotate_worker` invalidates the previous token by replacing its hash.
+- `/register_worker` issues a private-chat worker token; `/rotate_worker` invalidates the previous token by replacing its hash. This `psw_...` worker token is separate from `TELEGRAM_BOT_TOKEN` (the BotFather token); never paste the BotFather token into the Android Worker app.
 - Queue schema: `psurvival_bot_jobs`; executor registry: `psurvival_bot_devices`; event log: `psurvival_bot_job_events`.
 - The worker API supports authenticated `claim`, `heartbeat`, `complete`, and `fail` operations with leases and retry scheduling.
 - Each Termux bridge claim includes a fresh UUID `claim_token`; the database uses it to make claim retries idempotent. The Python and Node clients must send this field to match the deployed `termux-bridge` function.
@@ -80,10 +80,10 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 - Telegram send failures are checked against both HTTP status and the Bot API JSON `ok` field; failures return HTTP 502 so Telegram can retry delivery.
 - A GET request to the function endpoint returns a basic health/configuration response.
 - The health endpoint does not prove that a real Telegram chat received a reply; that requires a live message roundtrip.
-- An Android AccessibilityService client is in the repository. It polls the queue, sends heartbeats, executes explicit steps, and reports completion or failure. Candidate `0.1.3` (versionCode `4`), commit `b304fc63e121f497e8158ff80e1892402e3b7e62`, passed GitHub Actions unit tests and debug APK assembly (run `46066882175`). Artifact ZIP SHA-256: `c07206d81546038217c7d5cafed9b03a2b48082022e5406da5edc976dd3e50f0`; APK SHA-256: `c349964725a401132ee6fb6f23047f26e886acbc7ecbf35bbf1b60b3c6be6b61`. The APK contains the pinned Russian Tesseract model and ARM64/ARMv7 native libraries. MIUI on the Redmi 10C rejected the ADB update with `INSTALL_FAILED_USER_RESTRICTED`; the installed version remains `0.1.1`, so the new runtime behavior is not yet device-verified.
+- Android Worker `0.1.3` (versionCode `4`) is installed on the Redmi 10C (Android 13, 720×1650), with Accessibility enabled and bound. Authenticated queue polling, Russian on-device OCR, screen guards, OCR-target selection, and read-only Shooter Camp details inspection passed on the physical device. The installed Worker SHA-256 and pairing evidence are recorded in the Osiris Memory checkpoint.
 - Screenshot OCR uses Tesseract4Android 4.9.0 (Tesseract 5.5.1) with the Russian `tessdata_fast` model. The model is fetched at CI build time from a pinned upstream commit and SHA-256 verified; recognition runs on-device in the app-private directory.
-- The current `daily_routine` task is only a queue record; it does not yet launch the game or perform in-game actions.
-- The Android client requires installation, token entry, and enabling the Accessibility service in Android Settings. The existing 0.1.1 installation on the Redmi 10C has the service enabled but it is not bound and is listed as crashed. The fix candidate has passed CI but is not yet installed; behavior under screen locks, app restarts, and network loss remains unverified.
+- `daily_routine` is executed by the Android Worker, not merely stored as a queue record. The Worker launches the game, captures UI, performs guarded OCR selection, and reports terminal job status. Only the explicitly configured steps are executed.
+- The Android client requires pairing and enabling the Accessibility service in Android Settings. Redmi 10C is paired and the service is currently bound. Screen-lock recovery, process-restart recovery, and prolonged network-loss behavior remain unverified.
 - Configure a routine in a private Telegram chat with `/set daily_steps [{"type":"launch_app","package_name":"com.global.ztmslg"},{"type":"wait","duration_ms":3000}]`. Supported step types are `launch_app`, `wait`, `back`, `tap_text`, `tap_description`, `tap_coordinates`, `tap_ocr_word`, `capture_ui`, and `assert_screen` (classifier-backed screen guard). Screen-specific actions must be tuned to the actual game UI.
 - Supabase Edge Functions are short-lived request handlers, not a persistent Android emulator or 24/7 gameplay host.
 
@@ -125,7 +125,7 @@ Keep secrets out of source control. Do not use this prototype to bypass game pro
 - [Gameplay scenario catalogue](docs/gameplay-scenarios.md) — source-backed player workflows and conservative UI templates; exact labels must be checked on the current game build.
 - [Integration test matrix](docs/integration-test-matrix.md) — end-to-end checks for Telegram, Supabase queue, Android worker and game launch.
 
-These documents do not claim that a physical-device test has already passed. The current worker executes UI steps but cannot semantically verify game state or reliably infer screens from visual content.
+Physical-device evidence exists for authenticated polling, city/building screen classification, Russian OCR, OCR-target selection, and read-only building inspection. Screen classification remains conservative and text-only: it is not a complete semantic model of game state and never authorizes an action by itself. An `unknown` result remains fail-closed. The latest dual-layout OCR and retry changes are installed and passed live Redmi 10C checks for city/building classification and guarded OCR selection. Screen-lock recovery, process-restart recovery, and prolonged network-loss behavior remain unverified.
 
 Each worker invocation drains the current queue before exiting; Telegram webhook requests only enqueue jobs and never wait for a Sherlock scan.
 

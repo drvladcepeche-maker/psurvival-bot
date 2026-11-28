@@ -6,9 +6,11 @@ on:
       - feature/game-screen-ocr
       - feature/game-screen-classifier
       - fix/android-arrayadapter-refresh-20261128
+      - fix/telegram-advanced-worker-steps-20261128
   pull_request:
     branches:
       - main
+      - fix/android-arrayadapter-refresh-20261128
 
 jobs:
   build:

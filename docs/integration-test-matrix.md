@@ -1,6 +1,6 @@
 # Integration test matrix: Telegram → Supabase → Android worker → game
 
-This matrix distinguishes service health from a real end-to-end success. The public repository describes the Edge Functions and Android AccessibilityService, but a physical-device run must still be demonstrated.
+This matrix distinguishes service health from a real end-to-end success. The Telegram `/status` roundtrip and the latest dual-layout OCR Worker build have been observed on the Redmi 10C. INT-16, INT-17, and the Shooter Camp read-only path in INT-19 passed live validation on 2026-11-28; untested cases remain explicitly open.
 
 ## Components and contract
 
@@ -31,10 +31,11 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 | INT-13 | Network lost during job | Lease/retry behavior does not silently mark success | Events + queue state |
 | INT-14 | Accessibility service disabled | No claim/execution; user can diagnose locally | Device observation |
 | INT-15 | Phone screen locked / app process restarted | Behavior documented; no claim of unattended reliability without testing | Device observation |
-| INT-16 | `assert_screen` expects the current screen category | Matching category allows the next step; `unknown` or a different category fails the job before the next UI action and returns the captured evidence | Worker job result + device screen |
-| INT-17 | `tap_ocr_word` targets a single visible word | Exactly one matching OCR word with confidence ≥55 and valid bounds is tapped; zero/multiple/low-confidence matches fail without tapping | OCR snapshot + gesture result |
+| INT-16 | `assert_screen` expects the current screen category | Matching category allows the next step; `unknown` is recaptured up to three times with a 700 ms gap; a confidently different category fails immediately; persistent `unknown` fails closed | Worker job result + device screen |
+| INT-17 | `tap_ocr_word` targets a single visible word | Exactly one spatial word location with valid bounds is required. A single-pass hit needs confidence ≥55; a lower-confidence hit is accepted only when sparse-text and auto-layout passes independently identify the same word at overlapping boxes (max confidence ≥30, mean ≥35). Zero/multiple/unconfirmed matches fail without tapping | OCR snapshot + gesture result |
 | INT-18 | OCR word box falls outside the active Unity window | Worker rejects the tap before dispatching a gesture; Android system navigation receives no accidental game-worker tap | Snapshot `window_bounds` + job failure |
-| INT-19 | Headquarters building details screen | OCR/classifier returns `building`; the read-only inspection scenario reaches details without pressing `Улучшить` or spending resources | Worker OCR snapshot + screen guard |
+| INT-19 | Shooter Camp building details screen | OCR/classifier returns `building`; the read-only inspection reaches `Данные здания` without pressing `Улучшить` or spending resources | Worker job `a959ef18-a2f7-42bd-894c-9a23465c88de`, OCR snapshots, physical-device confirmation |
+| INT-20 | OCR step fails after capture | Job retains a bounded text-only diagnostic sample with OCR passes, confidence and word boxes; no screenshot image or unrelated app content is stored | Failed job `result` + event |
 
 ## Common fault isolation
 
@@ -43,12 +44,14 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 - Job remains `queued`: verify Android app is running, token is saved, Accessibility service is enabled, and phone has network.
 - Job fails at `launch_app`: verify package `com.global.ztmslg` is installed and has a launcher activity.
 - Job fails at `tap_text`: the label may not be exposed through Android accessibility, may differ by language, or may not be on screen. Re-observe instead of guessing.
+- `assert_screen` remains `unknown`: inspect the text and per-pass scores in the bounded OCR diagnostics; the worker retries unknown captures three times and then stops rather than guessing.
+- `tap_ocr_word` confidence is low: the worker requires independent sparse-text/auto agreement on the same word box; do not lower the threshold or substitute guessed coordinates.
 - Job stays `running`: inspect worker heartbeat, lease expiry, and job events. Do not submit repeated jobs until the previous job state is understood.
 - HTTP 200 health response alone is not proof of Telegram delivery or in-game action.
 
 ## Current implementation caveats to verify
 
-- Android routine execution currently reports the configured step count as `executed_steps`; this is not a semantic verification of the game outcome.
+- `executed_steps` counts executor steps that ran; it is not semantic verification that a game-side action succeeded.
 - `tap_coordinates` values are interpreted as screen pixels by the Android client. Calibrate per display resolution/orientation.
 - The Android client now includes its configured Worker ID in API requests, and the server rejects a non-empty ID that does not match the authenticated token. Older clients that omit the field remain temporarily compatible; test INT-09a after deploying both updated components.
 - The Android service's current failure path can lose a failure-reporting error if the API is unavailable; inspect queue lease/retry state before assuming a job was handled.
@@ -56,4 +59,4 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 
 ## Release gate
 
-Do not label a build “working end-to-end” until INT-02, INT-05, INT-08, INT-10 and INT-11 have been observed, with logs and screenshots redacted. Never place secrets in repository artifacts.
+Do not label the full gameplay product “working end-to-end” until all applicable integration cases are observed. The 2026-11-28 Redmi 10C evidence covers authenticated polling, queue execution, city/building guards, Russian OCR, and guarded OCR target selection; it does not cover screen-lock recovery, process-death recovery, network-loss recovery, ambiguous multiple-match rejection, or unrelated-app window isolation. Never place secrets in repository artifacts.
