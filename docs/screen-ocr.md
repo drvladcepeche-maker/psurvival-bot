@@ -21,7 +21,7 @@ On Android 10 / API 29 and lower, Accessibility labels remain available; screens
 3. On API 30+, capture the default display using `takeScreenshot`.
 4. Convert the HardwareBuffer into a software Bitmap in memory.
 5. Run two independent Tesseract layout passes: `PSM_SPARSE_TEXT` and `PSM_AUTO`.
-6. Select the higher-scoring pass for primary text and classification; preserve word boxes from both passes for guarded target matching.
+6. Keep the higher-scoring pass as the primary OCR transcript; classify against the bounded union of both pass transcripts so labels found by either layout remain available. Preserve word boxes from both passes for guarded target matching.
 7. Normalize line and word bounds to the 0–10000 coordinate space.
 8. Recycle the Bitmap. No screenshot image is written to local storage.
 
@@ -34,7 +34,7 @@ The `screenshot_ocr` object includes:
 - `status`, `engine`, `language`, `processed_on_device`;
 - `image_width`, `image_height`;
 - `page_segmentation` and per-pass quality diagnostics in `passes`;
-- primary `text`;
+- primary `text` from the higher-scoring pass and bounded `classification_text` merged from both passes;
 - `lines` and `words`, each with text, pass name, normalized bounds, and OCR confidence where available.
 
 The sibling `screen_classification` object reports a conservative keyword category, heuristic confidence, evidence, alternatives, and `actionable: false`. The classifier is observation-only and does not authorize an action.
@@ -81,6 +81,6 @@ Failed jobs may include a bounded text-only diagnostic trail containing the last
 ## Known limitations
 
 - The bundled model targets Russian game UI; English OCR is not covered by this model.
-- OCR typos, overlays, mixed screens, small labels, and Unity-rendered text can still cause missed or incorrect recognition.
+- OCR typos, overlays, mixed screens, small labels, and Unity-rendered text can still cause missed or incorrect recognition. The classifier sees evidence from both layout passes, but weak or conflicting evidence remains `unknown`.
 - Keyword classification is a baseline, not a trained visual model; its confidence is heuristic, not a calibrated probability.
 - Live validation of the latest dual-pass OCR build is still required on the Redmi 10C before PR #20 can be merged.
