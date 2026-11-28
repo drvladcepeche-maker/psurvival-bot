@@ -1,6 +1,6 @@
 # Integration test matrix: Telegram → Supabase → Android worker → game
 
-This matrix distinguishes service health from a real end-to-end success. The public repository describes the Edge Functions and Android AccessibilityService, but a physical-device run must still be demonstrated.
+This matrix distinguishes service health from a real end-to-end success. The Telegram `/status` roundtrip and the earlier Redmi 10C worker/game checks have been observed; the latest dual-layout OCR changes still require a live-device regression run.
 
 ## Components and contract
 
@@ -31,10 +31,11 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 | INT-13 | Network lost during job | Lease/retry behavior does not silently mark success | Events + queue state |
 | INT-14 | Accessibility service disabled | No claim/execution; user can diagnose locally | Device observation |
 | INT-15 | Phone screen locked / app process restarted | Behavior documented; no claim of unattended reliability without testing | Device observation |
-| INT-16 | `assert_screen` expects the current screen category | Matching category allows the next step; `unknown` or a different category fails the job before the next UI action and returns the captured evidence | Worker job result + device screen |
-| INT-17 | `tap_ocr_word` targets a single visible word | Exactly one matching OCR word with confidence ≥55 and valid bounds is tapped; zero/multiple/low-confidence matches fail without tapping | OCR snapshot + gesture result |
+| INT-16 | `assert_screen` expects the current screen category | Matching category allows the next step; `unknown` is recaptured up to three times with a 700 ms gap; a confidently different category fails immediately; persistent `unknown` fails closed | Worker job result + device screen |
+| INT-17 | `tap_ocr_word` targets a single visible word | Exactly one spatial word location with valid bounds is required. A single-pass hit needs confidence ≥55; a lower-confidence hit is accepted only when sparse-text and auto-layout passes independently identify the same word at overlapping boxes (max confidence ≥30, mean ≥35). Zero/multiple/unconfirmed matches fail without tapping | OCR snapshot + gesture result |
 | INT-18 | OCR word box falls outside the active Unity window | Worker rejects the tap before dispatching a gesture; Android system navigation receives no accidental game-worker tap | Snapshot `window_bounds` + job failure |
 | INT-19 | Headquarters building details screen | OCR/classifier returns `building`; the read-only inspection scenario reaches details without pressing `Улучшить` or spending resources | Worker OCR snapshot + screen guard |
+| INT-20 | OCR step fails after capture | Job retains a bounded text-only diagnostic sample with OCR passes, confidence and word boxes; no screenshot image or unrelated app content is stored | Failed job `result` + event |
 
 ## Common fault isolation
 
@@ -43,6 +44,8 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 - Job remains `queued`: verify Android app is running, token is saved, Accessibility service is enabled, and phone has network.
 - Job fails at `launch_app`: verify package `com.global.ztmslg` is installed and has a launcher activity.
 - Job fails at `tap_text`: the label may not be exposed through Android accessibility, may differ by language, or may not be on screen. Re-observe instead of guessing.
+- `assert_screen` remains `unknown`: inspect the text and per-pass scores in the bounded OCR diagnostics; the worker retries unknown captures three times and then stops rather than guessing.
+- `tap_ocr_word` confidence is low: the worker requires independent sparse-text/auto agreement on the same word box; do not lower the threshold or substitute guessed coordinates.
 - Job stays `running`: inspect worker heartbeat, lease expiry, and job events. Do not submit repeated jobs until the previous job state is understood.
 - HTTP 200 health response alone is not proof of Telegram delivery or in-game action.
 
@@ -56,4 +59,4 @@ This matrix distinguishes service health from a real end-to-end success. The pub
 
 ## Release gate
 
-Do not label a build “working end-to-end” until INT-02, INT-05, INT-08, INT-10 and INT-11 have been observed, with logs and screenshots redacted. Never place secrets in repository artifacts.
+Do not label a build “working end-to-end” until INT-02, INT-05, INT-08, INT-10, INT-11 and the relevant OCR guards (INT-16 through INT-20) have been observed on the target device, with logs and screenshots redacted. Never place secrets in repository artifacts.
