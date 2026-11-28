@@ -366,15 +366,28 @@ class WorkerAccessibilityService : AccessibilityService() {
             throw IllegalStateException("Тайм-аут получения снимка экрана")
         }
         val fullDisplay = result.get() ?: throw IllegalStateException(failure.get() ?: "Screenshot bitmap is empty")
+        var returnedOriginal = false
         try {
+            // Re-check after capture to catch overlays that appeared during the screenshot request.
+            if (!isUnobstructedGameWindow(gameWindowBounds, gameWindowId, selectedPackage)) {
+                throw IllegalStateException("OCR заблокирован: во время снимка появилось перекрывающее окно")
+            }
             val crop = ScreenshotCropBounds.calculate(
                 gameWindowBounds.left, gameWindowBounds.top,
                 gameWindowBounds.right, gameWindowBounds.bottom,
                 fullDisplay.width, fullDisplay.height
             ) ?: throw IllegalStateException("OCR заблокирован: некорректные границы игрового окна")
+            if (crop.left == 0 && crop.top == 0 &&
+                crop.right == fullDisplay.width && crop.bottom == fullDisplay.height) {
+                // Bitmap.createBitmap may return the source for a full-size crop; keep it alive.
+                returnedOriginal = true
+                return fullDisplay
+            }
             return Bitmap.createBitmap(fullDisplay, crop.left, crop.top, crop.width, crop.height)
+        } catch (error: Throwable) {
+            throw error
         } finally {
-            fullDisplay.recycle()
+            if (!returnedOriginal) fullDisplay.recycle()
         }
     }
 
