@@ -207,6 +207,7 @@ class WorkerAccessibilityService : AccessibilityService() {
                 .put("page_segmentation", ocr.optString("page_segmentation", ""))
                 .put("passes", ocr.optJSONArray("passes") ?: JSONArray())
                 .put("text", ocr.optString("text", "").take(4000))
+                .put("classification_text", ocr.optString("classification_text", "").take(4000))
                 .put("word_count", sourceWords.length())
                 .put("words_sample", selectedWords)
             snapshots.put(JSONObject()
@@ -459,9 +460,10 @@ class WorkerAccessibilityService : AccessibilityService() {
             }
         }
 
-        val screenClassification = GameScreenClassifier.classify(
-            if (ocr.optString("status") == "ok") ocr.optString("text") else ""
-        )
+        val classificationText = if (ocr.optString("status") == "ok") {
+            ocr.optString("classification_text").ifBlank { ocr.optString("text") }
+        } else ""
+        val screenClassification = GameScreenClassifier.classify(classificationText)
 
         return JSONObject()
             .put("package_name", activePackage)
@@ -562,6 +564,10 @@ class WorkerAccessibilityService : AccessibilityService() {
         }
         val best = passes.maxByOrNull { it.quality }
             ?: throw IllegalStateException("Tesseract produced no OCR passes")
+        // Keep the best pass as the primary OCR transcript, but classify against
+        // the bounded union so a high-confidence layout pass cannot hide labels
+        // recognized only by the alternate layout.
+        val classificationText = passes.joinToString("\n") { it.text }.take(24000)
         val allWords = JSONArray()
         passes.forEach { pass ->
             for (index in 0 until pass.words.length()) {
@@ -586,6 +592,7 @@ class WorkerAccessibilityService : AccessibilityService() {
             .put("image_width", width)
             .put("image_height", height)
             .put("text", best.text)
+            .put("classification_text", classificationText)
             .put("lines", best.lines)
             .put("words", allWords)
     }
