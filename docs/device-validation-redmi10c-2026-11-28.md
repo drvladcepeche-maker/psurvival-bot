@@ -1,6 +1,6 @@
 # Redmi 10C device validation — 2026-11-28
 
-Status: **validated on device with Worker 0.1.3**.
+Status: **validated on device with Worker 0.1.3; dual-layout OCR follow-up passed on 2026-11-28**.
 
 ## Environment
 
