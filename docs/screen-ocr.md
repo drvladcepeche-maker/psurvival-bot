@@ -17,11 +17,14 @@ On Android 10 / API 29 and lower, `capture_ui` continues to return Accessibility
 
 1. Confirm that the active Accessibility window belongs to the selected Puzzles & Survival package.
 2. Collect visible, non-editable Accessibility labels.
-3. On API 30+, capture the default display using `takeScreenshot`.
-4. Convert the HardwareBuffer into a software Bitmap in memory.
-5. Run ML Kit Text Recognition locally.
-6. Return recognized text and line bounding boxes normalized to the 0–10000 screen coordinate space.
-7. Recycle the Bitmap. No screenshot image is written to local storage.
+3. Confirm the game window is present in the interactive-window list and is active/focused.
+4. Fail closed if any other visible accessibility window intersects the game window.
+5. On API 30+, capture the default display using `takeScreenshot`.
+6. Validate the game-window bounds against the captured bitmap; reject empty, inverted, negative, or out-of-image bounds without clamping.
+7. Crop the in-memory bitmap to the game-window rectangle before ML Kit receives it.
+8. Run ML Kit Text Recognition locally on the cropped bitmap only.
+9. Return recognized text and line bounding boxes normalized to the cropped image coordinate space.
+10. Recycle both full-display and cropped bitmaps. No screenshot image is written to local storage.
 
 The screenshot bitmap is not sent to Supabase. The OCR text and line coordinates are included in the existing `capture_ui` result payload and therefore are sent to the configured Worker API when the job is completed. Keep this in mind when testing screens containing player names or chat text.
 
