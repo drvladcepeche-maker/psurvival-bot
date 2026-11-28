@@ -422,6 +422,7 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val bounds = Rect()
                 window.getBoundsInScreen(bounds)
                 if (window.id == gameWindowId) {
+                    if (bounds != gameBounds) return false
                     matchingGameWindowFound = window.isActive || window.isFocused
                     continue
                 }
