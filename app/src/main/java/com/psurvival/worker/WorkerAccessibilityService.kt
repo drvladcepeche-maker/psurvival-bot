@@ -200,13 +200,33 @@ class WorkerAccessibilityService : AccessibilityService() {
                             .filter { it.isLetterOrDigit() } == normalizedNeedle
                     }
                 }
-                if (matches.size != 1) {
-                    throw IllegalStateException("OCR word match must be unique: $needle (matches=${matches.size})")
+                // A word can be recognized by both independent page-layout passes.
+                // Merge only spatially overlapping boxes; separate occurrences remain ambiguous.
+                val clusters = mutableListOf<MutableList<JSONObject>>()
+                for (candidate in matches) {
+                    val candidateBounds = candidate.optJSONObject("bounds") ?: continue
+                    val cluster = clusters.firstOrNull { existing ->
+                        sameOcrWord(candidateBounds, existing.first().optJSONObject("bounds"))
+                    }
+                    if (cluster == null) clusters.add(mutableListOf(candidate)) else cluster.add(candidate)
                 }
-                val match = matches.single()
+                if (clusters.size != 1) {
+                    throw IllegalStateException("OCR word match must be unique: $needle (locations=${clusters.size})")
+                }
+                val cluster = clusters.single()
+                val match = cluster.maxByOrNull { it.optDouble("confidence", -1.0) }
+                    ?: throw IllegalStateException("OCR word box is unavailable: $needle")
                 val confidence = match.optDouble("confidence", -1.0)
-                if (confidence < 55.0) {
-                    throw IllegalStateException("OCR confidence too low for tap: $needle ($confidence)")
+                val independentPasses = cluster.map { it.optString("pass") }.filter { it.isNotBlank() }.distinct().size
+                val averageConfidence = cluster.map { it.optDouble("confidence", -1.0) }
+                    .filter { it >= 0.0 }.average()
+                // Keep the strict single-pass threshold. A lower-confidence hit is accepted
+                // only when both layout modes independently locate the same word and box.
+                val corroborated = independentPasses >= 2 && confidence >= 30.0 && averageConfidence >= 35.0
+                if (confidence < 55.0 && !corroborated) {
+                    throw IllegalStateException(
+                        "OCR confidence too low for tap: $needle ($confidence; corroborated_passes=$independentPasses)"
+                    )
                 }
                 val bounds = match.optJSONObject("bounds")
                     ?: throw IllegalStateException("OCR word has no bounding box: $needle")
@@ -292,14 +312,28 @@ class WorkerAccessibilityService : AccessibilityService() {
                 if (expected !in allowed) {
                     throw IllegalArgumentException("assert_screen category must be one of: ${allowed.joinToString()}")
                 }
-                val snapshot = captureGameUiSnapshot()
-                capturedUiSnapshots.add(snapshot)
-                val classification = snapshot.optJSONObject("screen_classification")
-                val actual = classification?.optString("category", "unknown") ?: "unknown"
-                if (actual != expected) {
-                    val reason = classification?.optString("reason", "classification_missing") ?: "classification_missing"
-                    throw IllegalStateException("Screen guard failed: expected=$expected actual=$actual reason=$reason")
+                var lastReason = "classification_missing"
+                var actual = "unknown"
+                // Unity screens can be between transitions for a short period. Retry only
+                // unknown classifications; a confidently different screen remains a hard stop.
+                for (attempt in 0 until 3) {
+                    val snapshot = captureGameUiSnapshot()
+                    capturedUiSnapshots.add(snapshot)
+                    val classification = snapshot.optJSONObject("screen_classification")
+                    actual = classification?.optString("category", "unknown") ?: "unknown"
+                    lastReason = classification?.optString("reason", "classification_missing")
+                        ?: "classification_missing"
+                    if (actual == expected) return
+                    if (actual != "unknown") {
+                        throw IllegalStateException(
+                            "Screen guard failed: expected=$expected actual=$actual reason=$lastReason"
+                        )
+                    }
+                    if (attempt < 2) Thread.sleep(700L)
                 }
+                throw IllegalStateException(
+                    "Screen guard failed: expected=$expected actual=$actual reason=$lastReason attempts=3"
+                )
             }
             "capture_ui" -> {
                 capturedUiSnapshots.add(captureGameUiSnapshot())
@@ -438,31 +472,74 @@ class WorkerAccessibilityService : AccessibilityService() {
         return result.get() ?: throw IllegalStateException(failure.get() ?: "Screenshot bitmap is empty")
     }
 
+    private data class OcrPass(
+        val mode: String,
+        val text: String,
+        val lines: JSONArray,
+        val words: JSONArray,
+        val meanWordConfidence: Double,
+        val quality: Double
+    )
+
     private fun recognizeScreenshot(bitmap: Bitmap): JSONObject = synchronized(ocrLock) {
         val api = getOrCreateTesseract()
-        api.setPageSegMode(TessBaseAPI.PageSegMode.PSM_SINGLE_BLOCK)
-        api.setImage(bitmap)
-        try {
-            val text = api.getUTF8Text().orEmpty().take(12000)
-            val width = bitmap.width.coerceAtLeast(1)
-            val height = bitmap.height.coerceAtLeast(1)
-            val lines = extractOcrItems(api, TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE, width, height, 250)
-            val words = extractOcrItems(api, TessBaseAPI.PageIteratorLevel.RIL_WORD, width, height, 500)
-
-            JSONObject()
-                .put("status", "ok")
-                .put("engine", "tesseract4android_5.5.1")
-                .put("language", "rus")
-                .put("page_segmentation", "single_block")
-                .put("processed_on_device", true)
-                .put("image_width", width)
-                .put("image_height", height)
-                .put("text", text)
-                .put("lines", lines)
-                .put("words", words)
-        } finally {
-            api.clear()
+        val width = bitmap.width.coerceAtLeast(1)
+        val height = bitmap.height.coerceAtLeast(1)
+        val modes = listOf(
+            "sparse_text" to TessBaseAPI.PageSegMode.PSM_SPARSE_TEXT,
+            "auto" to TessBaseAPI.PageSegMode.PSM_AUTO
+        )
+        val passes = modes.map { (modeName, mode) ->
+            api.setPageSegMode(mode)
+            api.setImage(bitmap)
+            try {
+                val text = api.getUTF8Text().orEmpty().take(12000)
+                val lines = extractOcrItems(
+                    api, TessBaseAPI.PageIteratorLevel.RIL_TEXTLINE, width, height, 250, modeName
+                )
+                val words = extractOcrItems(
+                    api, TessBaseAPI.PageIteratorLevel.RIL_WORD, width, height, 500, modeName
+                )
+                val confidences = (0 until words.length()).mapNotNull { index ->
+                    words.optJSONObject(index)?.optDouble("confidence", -1.0)?.takeIf { it >= 0.0 }
+                }
+                val meanConfidence = if (confidences.isEmpty()) 0.0 else confidences.average()
+                val quality = meanConfidence +
+                    words.length().coerceAtMost(40) * 0.45 +
+                    text.length.coerceAtMost(3000) / 1000.0
+                OcrPass(modeName, text, lines, words, meanConfidence, quality)
+            } finally {
+                api.clear()
+            }
         }
+        val best = passes.maxByOrNull { it.quality }
+            ?: throw IllegalStateException("Tesseract produced no OCR passes")
+        val allWords = JSONArray()
+        passes.forEach { pass ->
+            for (index in 0 until pass.words.length()) {
+                pass.words.optJSONObject(index)?.let { allWords.put(it) }
+            }
+        }
+        val passDiagnostics = JSONArray()
+        passes.forEach { pass ->
+            passDiagnostics.put(JSONObject()
+                .put("mode", pass.mode)
+                .put("word_count", pass.words.length())
+                .put("mean_word_confidence", pass.meanWordConfidence)
+                .put("quality_score", pass.quality))
+        }
+        JSONObject()
+            .put("status", "ok")
+            .put("engine", "tesseract4android_5.5.1")
+            .put("language", "rus")
+            .put("page_segmentation", best.mode)
+            .put("passes", passDiagnostics)
+            .put("processed_on_device", true)
+            .put("image_width", width)
+            .put("image_height", height)
+            .put("text", best.text)
+            .put("lines", best.lines)
+            .put("words", allWords)
     }
 
     private fun extractOcrItems(
@@ -470,7 +547,8 @@ class WorkerAccessibilityService : AccessibilityService() {
         level: Int,
         width: Int,
         height: Int,
-        limit: Int
+        limit: Int,
+        pass: String
     ): JSONArray {
         val items = JSONArray()
         val iterator = api.getResultIterator() ?: return items
@@ -482,6 +560,7 @@ class WorkerAccessibilityService : AccessibilityService() {
                     val bounds = iterator.getBoundingRect(level)
                     val item = JSONObject()
                         .put("text", itemText)
+                        .put("pass", pass)
                         .put("bounds", JSONObject()
                             .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
                             .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
@@ -496,6 +575,33 @@ class WorkerAccessibilityService : AccessibilityService() {
             iterator.delete()
         }
         return items
+    }
+
+    private fun sameOcrWord(first: JSONObject, second: JSONObject?): Boolean {
+        if (second == null) return false
+        val aLeft = first.optInt("left", -1)
+        val aTop = first.optInt("top", -1)
+        val aRight = first.optInt("right", -1)
+        val aBottom = first.optInt("bottom", -1)
+        val bLeft = second.optInt("left", -1)
+        val bTop = second.optInt("top", -1)
+        val bRight = second.optInt("right", -1)
+        val bBottom = second.optInt("bottom", -1)
+        if (aLeft < 0 || aTop < 0 || aRight <= aLeft || aBottom <= aTop ||
+            bLeft < 0 || bTop < 0 || bRight <= bLeft || bBottom <= bTop) return false
+        val intersectionWidth = (minOf(aRight, bRight) - maxOf(aLeft, bLeft)).coerceAtLeast(0)
+        val intersectionHeight = (minOf(aBottom, bBottom) - maxOf(aTop, bTop)).coerceAtLeast(0)
+        val intersection = intersectionWidth * intersectionHeight
+        val smallerArea = minOf((aRight - aLeft) * (aBottom - aTop), (bRight - bLeft) * (bBottom - bTop))
+        if (smallerArea > 0 && intersection.toDouble() / smallerArea >= 0.25) return true
+        val centerAX = (aLeft + aRight) / 2
+        val centerAY = (aTop + aBottom) / 2
+        val centerBX = (bLeft + bRight) / 2
+        val centerBY = (bTop + bBottom) / 2
+        val toleranceX = maxOf(aRight - aLeft, bRight - bLeft) / 3 + 35
+        val toleranceY = maxOf(aBottom - aTop, bBottom - bTop) / 2 + 25
+        return kotlin.math.abs(centerAX - centerBX) <= toleranceX &&
+            kotlin.math.abs(centerAY - centerBY) <= toleranceY
     }
 
     private fun getOrCreateTesseract(): TessBaseAPI {
