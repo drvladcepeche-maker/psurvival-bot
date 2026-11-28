@@ -65,14 +65,14 @@ Failed jobs may include a bounded text-only diagnostic trail containing the last
 
 ## Device validation checklist
 
-- [ ] Install the exact CI APK on Android 11+ and verify its package version.
-- [ ] Confirm the Worker Accessibility service is enabled.
-- [ ] Capture a city screen and confirm `screenshot_ocr.status = ok` and category `city`.
-- [ ] Capture a building-details screen and confirm category `building`.
+- [x] Install the exact CI APK on Android 11+ and verify its package version (Redmi 10C, Worker 0.1.3 / versionCode 4; APK SHA-256 recorded in the device checkpoint).
+- [x] Confirm the Worker Accessibility service is enabled and bound.
+- [x] Capture a city screen and confirm `screenshot_ocr.status = ok` and category `city`.
+- [x] Capture a Shooter Camp building-details screen and confirm category `building`.
 - [ ] Confirm line and word bounds are within 0–10000.
-- [ ] Test a unique, clearly visible OCR word target such as `Детали`; verify the resulting screen with a fresh capture.
+- [x] Test a unique, clearly visible OCR word target `Детали`; verify the resulting screen with fresh captures.
 - [ ] Confirm ambiguous/multiple OCR matches fail without tapping.
-- [ ] Confirm a confidently different screen category stops the routine.
+- [x] Confirm a confidently different screen category stops the routine.
 - [ ] Confirm an `unknown` classification is retried at most three times.
 - [ ] Open another app and confirm the game-window guard prevents capture.
 - [ ] Verify failure diagnostics contain text only, not screenshots.
@@ -83,4 +83,4 @@ Failed jobs may include a bounded text-only diagnostic trail containing the last
 - The bundled model targets Russian game UI; English OCR is not covered by this model.
 - OCR typos, overlays, mixed screens, small labels, and Unity-rendered text can still cause missed or incorrect recognition. The classifier sees evidence from both layout passes, but weak or conflicting evidence remains `unknown`.
 - Keyword classification is a baseline, not a trained visual model; its confidence is heuristic, not a calibrated probability.
-- Live validation of the latest dual-pass OCR build is still required on the Redmi 10C before PR #20 can be merged.
+- Live validation of the latest dual-pass OCR build passed on the Redmi 10C on 2026-11-28. City and Shooter Camp building-details guards passed; a unique high-confidence `Детали` OCR target was tapped and the resulting building screen was independently confirmed. Remaining unchecked checklist items are still unverified.
