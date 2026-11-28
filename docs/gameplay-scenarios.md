@@ -77,7 +77,7 @@ This read-only scenario follows the visible main-task card to its highlighted bu
 ]
 ```
 
-Expected outcome: the game highlights the task target, opens the building menu, and returns a `building` classification on the details screen. No `Улучшить` button is pressed; no resources, speedups, or diamonds are spent. The coordinate is calibrated only for Redmi 10C at 720×1650 and must not be reused on another device or resolution. This sequence has been manually observed through ADB; execution through Worker 0.1.3 remains pending installation.
+Expected outcome: the game highlights the task target, opens the building menu, and returns a `building` classification on the details screen. No `Улучшить` button is pressed; no resources, speedups, or diamonds are spent. The coordinate is calibrated only for Redmi 10C at 720×1650 and must not be reused on another device or resolution. The old coordinate `(360,430)` is invalid for the current Redmi 10C city layout and opened the Watchtower in an earlier inspection. A read-only Shooter Camp inspection was subsequently verified on Worker 0.1.3: from a fresh 720×1650 city capture, select the visible Shooter Camp near `(350,830)`, then use the unique OCR target `Детали` and confirm `assert_screen(building)`. The building coordinate is specific to the observed city composition and must not be reused without a fresh screenshot. The live OCR target was recognized at 95.82% confidence; no upgrade or resource action was performed.
 
 ## Scenario 3 — resource gathering preparation (manual confirmation required)
 
