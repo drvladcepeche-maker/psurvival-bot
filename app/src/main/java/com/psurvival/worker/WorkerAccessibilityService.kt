@@ -163,12 +163,60 @@ class WorkerAccessibilityService : AccessibilityService() {
                     .put("action", "fail")
                     .put("job_id", jobId)
                     .put("error", (error.message ?: "Executor error").take(500))
-                    .put("retryable", error !is IllegalArgumentException))
+                    .put("retryable", error !is IllegalArgumentException)
+                    .put("diagnostics", compactFailureDiagnostics()))
             }
         } finally {
             activeJobId = null
             lastHeartbeatAt = 0L
         }
+    }
+
+    /**
+     * Persist a bounded, text-only diagnostic trail for failed OCR/screen steps.
+     * Screenshots, editable fields, credentials and unrelated app content are never stored.
+     */
+    private fun compactFailureDiagnostics(): JSONObject {
+        val snapshots = JSONArray()
+        capturedUiSnapshots.takeLast(3).forEach { snapshot ->
+            val ocr = snapshot.optJSONObject("screenshot_ocr") ?: JSONObject()
+            val sourceWords = ocr.optJSONArray("words") ?: JSONArray()
+            val candidates = (0 until sourceWords.length()).mapNotNull { index ->
+                sourceWords.optJSONObject(index)
+            }
+            val lowConfidence = candidates.sortedBy {
+                it.optDouble("confidence", 101.0)
+            }.take(80)
+            val highConfidence = candidates.sortedByDescending {
+                it.optDouble("confidence", -1.0)
+            }.take(20)
+            val selectedWords = JSONArray()
+            (lowConfidence + highConfidence).distinctBy {
+                listOf(it.optString("pass"), it.optString("text"), it.optJSONObject("bounds")?.toString())
+                    .joinToString("|")
+            }.forEach { word ->
+                selectedWords.put(JSONObject()
+                    .put("text", word.optString("text").take(80))
+                    .put("pass", word.optString("pass"))
+                    .put("confidence", word.optDouble("confidence", -1.0))
+                    .put("bounds", word.optJSONObject("bounds") ?: JSONObject()))
+            }
+            val compactOcr = JSONObject()
+                .put("status", ocr.optString("status", "unknown"))
+                .put("engine", ocr.optString("engine", ""))
+                .put("page_segmentation", ocr.optString("page_segmentation", ""))
+                .put("passes", ocr.optJSONArray("passes") ?: JSONArray())
+                .put("text", ocr.optString("text", "").take(4000))
+                .put("word_count", sourceWords.length())
+                .put("words_sample", selectedWords)
+            snapshots.put(JSONObject()
+                .put("package_name", snapshot.optString("package_name", ""))
+                .put("captured_at_ms", snapshot.optLong("captured_at_ms", 0L))
+                .put("window_bounds", snapshot.optJSONObject("window_bounds") ?: JSONObject())
+                .put("screen_classification", snapshot.optJSONObject("screen_classification") ?: JSONObject())
+                .put("screenshot_ocr", compactOcr))
+        }
+        return JSONObject().put("ui_snapshots", snapshots)
     }
 
     private fun executeStep(step: JSONObject) {
