@@ -5,6 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.view.Display
 import android.os.Build
 import com.google.android.gms.tasks.Tasks
@@ -258,6 +259,9 @@ class WorkerAccessibilityService : AccessibilityService() {
             throw IllegalStateException("capture_ui заблокирован вне игры: $activePackage")
         }
 
+        val gameWindowBounds = Rect()
+        root.getBoundsInScreen(gameWindowBounds)
+        val gameWindowId = root.windowId
         val labels = JSONArray()
         var visited = 0
         try {
@@ -293,7 +297,7 @@ class WorkerAccessibilityService : AccessibilityService() {
                 .put("reason", "screen_capture_requires_android_11_api_30")
         } else {
             runCatching {
-                val bitmap = captureGameScreenshot()
+                val bitmap = captureGameScreenshot(gameWindowBounds, gameWindowId, selectedPackage)
                 try {
                     recognizeScreenshot(bitmap)
                 } finally {
@@ -318,7 +322,14 @@ class WorkerAccessibilityService : AccessibilityService() {
     }
 
     @android.annotation.TargetApi(30)
-    private fun captureGameScreenshot(): Bitmap {
+    private fun captureGameScreenshot(
+        gameWindowBounds: Rect,
+        gameWindowId: Int,
+        selectedPackage: String
+    ): Bitmap {
+        if (!isUnobstructedGameWindow(gameWindowBounds, gameWindowId, selectedPackage)) {
+            throw IllegalStateException("OCR заблокирован: игровое окно перекрыто или не подтверждено")
+        }
         val latch = CountDownLatch(1)
         val result = AtomicReference<Bitmap?>(null)
         val failure = AtomicReference<String?>(null)
@@ -354,7 +365,55 @@ class WorkerAccessibilityService : AccessibilityService() {
         if (!latch.await(12, TimeUnit.SECONDS)) {
             throw IllegalStateException("Тайм-аут получения снимка экрана")
         }
-        return result.get() ?: throw IllegalStateException(failure.get() ?: "Screenshot bitmap is empty")
+        val fullDisplay = result.get() ?: throw IllegalStateException(failure.get() ?: "Screenshot bitmap is empty")
+        try {
+            val crop = ScreenshotCropBounds.calculate(
+                gameWindowBounds.left, gameWindowBounds.top,
+                gameWindowBounds.right, gameWindowBounds.bottom,
+                fullDisplay.width, fullDisplay.height
+            ) ?: throw IllegalStateException("OCR заблокирован: некорректные границы игрового окна")
+            return Bitmap.createBitmap(fullDisplay, crop.left, crop.top, crop.width, crop.height)
+        } finally {
+            fullDisplay.recycle()
+        }
+    }
+
+    /**
+     * Fail closed if any other visible accessibility window intersects the game window.
+     * This prevents notification shades, heads-up overlays, keyboards and other apps
+     * from being included in OCR even when they overlap the game's rectangle.
+     */
+    private fun isUnobstructedGameWindow(
+        gameBounds: Rect,
+        gameWindowId: Int,
+        selectedPackage: String
+    ): Boolean {
+        if (gameBounds.isEmpty || gameBounds.left < 0 || gameBounds.top < 0) return false
+        val displayMetrics = resources.displayMetrics
+        if (displayMetrics.widthPixels <= 0 || displayMetrics.heightPixels <= 0) return false
+        if (gameBounds.right > displayMetrics.widthPixels || gameBounds.bottom > displayMetrics.heightPixels) return false
+
+        val visibleWindows = runCatching { windows }.getOrNull() ?: return false
+        var matchingGameWindowFound = false
+        for (window in visibleWindows) {
+            val bounds = Rect()
+            window.getBoundsInScreen(bounds)
+            if (window.id == gameWindowId) {
+                matchingGameWindowFound = window.isActive || window.isFocused
+                continue
+            }
+            if (!Rect.intersects(gameBounds, bounds)) continue
+            val windowRoot = runCatching { window.root }.getOrNull()
+            val packageName = try {
+                windowRoot?.packageName?.toString().orEmpty()
+            } finally {
+                windowRoot?.recycle()
+            }
+            if (packageName != selectedPackage && packageName != "com.global.ztmslg") {
+                return false
+            }
+        }
+        return matchingGameWindowFound
     }
 
     private fun recognizeScreenshot(bitmap: Bitmap): JSONObject {
