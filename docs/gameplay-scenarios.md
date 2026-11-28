@@ -57,18 +57,16 @@ Use this as the prerequisite for every other routine. The delay is a starting va
 
 Current device note: on the Redmi 10C, the visible bottom `Квесты` label is outside the Unity accessibility window bounds (`[0,0][720,1507]` on a 720×1650 display). Do not automate that tab until the system-bar/window-inset behavior is resolved. The smoke scenario therefore stops after a verified city capture; the quest-screen classifier is validated from a manually opened screen, not yet from an automated navigation sequence.
 
-## Scenario 2 — inspect the main-quest target building (read-only)
+## Scenario 2 — inspect Shooter Camp details (read-only)
 
-This read-only scenario follows the visible main-task card to its highlighted building, opens the building menu, and reads the building-details screen. It deliberately stops before any upgrade action.
+This read-only scenario selects the visible Shooter Camp from the city screen, opens its details panel, and stops before any upgrade or training action. The calibrated coordinate is specific to the observed Redmi 10C layout.
 
 ```json
 [
   {"type":"launch_app","package_name":"com.global.ztmslg"},
   {"type":"wait","duration_ms":8000},
   {"type":"assert_screen","category":"city"},
-  {"type":"tap_ocr_word","text":"Улучшите"},
-  {"type":"wait","duration_ms":800},
-  {"type":"tap_coordinates","x":360,"y":430},
+  {"type":"tap_coordinates","x":350,"y":830},
   {"type":"wait","duration_ms":800},
   {"type":"tap_ocr_word","text":"Детали"},
   {"type":"wait","duration_ms":1000},
@@ -77,7 +75,9 @@ This read-only scenario follows the visible main-task card to its highlighted bu
 ]
 ```
 
-Expected outcome: the game highlights the task target, opens the building menu, and returns a `building` classification on the details screen. No `Улучшить` button is pressed; no resources, speedups, or diamonds are spent. The coordinate is calibrated only for Redmi 10C at 720×1650 and must not be reused on another device or resolution. The old coordinate `(360,430)` is invalid for the current Redmi 10C city layout and opened the Watchtower in an earlier inspection. A read-only Shooter Camp inspection was subsequently verified on Worker 0.1.3: from a fresh 720×1650 city capture, select the visible Shooter Camp near `(350,830)`, then use the unique OCR target `Детали` and confirm `assert_screen(building)`. The building coordinate is specific to the observed city composition and must not be reused without a fresh screenshot. The live OCR target was recognized at 95.82% confidence; no upgrade or resource action was performed.
+Expected outcome: the visible Shooter Camp is selected, its menu opens, and the unique OCR target `Детали` opens the building-details panel. The Worker then confirms category `building` with a fresh capture. No `Улучшить` button is pressed; no resources, speedups, or diamonds are spent.
+
+The sequence was verified on Worker 0.1.3 on the Redmi 10C at 720×1650. The old coordinate `(360,430)` opened the Watchtower and must not be reused. The calibrated Shooter Camp coordinate `(350,830)` is specific to the observed city composition; inspect a fresh screenshot before using it and recalibrate if the layout changes. In the live dual-layout OCR test, `Детали` was recognized at 95.82% confidence and the resulting `Данные здания` screen was confirmed as `building`.
 
 ## Scenario 3 — resource gathering preparation (manual confirmation required)
 
