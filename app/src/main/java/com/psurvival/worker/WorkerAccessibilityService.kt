@@ -408,25 +408,29 @@ class WorkerAccessibilityService : AccessibilityService() {
 
         val visibleWindows = runCatching { windows }.getOrNull() ?: return false
         var matchingGameWindowFound = false
-        for (window in visibleWindows) {
-            val bounds = Rect()
-            window.getBoundsInScreen(bounds)
-            if (window.id == gameWindowId) {
-                matchingGameWindowFound = window.isActive || window.isFocused
-                continue
+        try {
+            for (window in visibleWindows) {
+                val bounds = Rect()
+                window.getBoundsInScreen(bounds)
+                if (window.id == gameWindowId) {
+                    matchingGameWindowFound = window.isActive || window.isFocused
+                    continue
+                }
+                if (!Rect.intersects(gameBounds, bounds)) continue
+                val windowRoot = runCatching { window.root }.getOrNull()
+                val packageName = try {
+                    windowRoot?.packageName?.toString().orEmpty()
+                } finally {
+                    windowRoot?.recycle()
+                }
+                if (packageName != selectedPackage && packageName != "com.global.ztmslg") {
+                    return false
+                }
             }
-            if (!Rect.intersects(gameBounds, bounds)) continue
-            val windowRoot = runCatching { window.root }.getOrNull()
-            val packageName = try {
-                windowRoot?.packageName?.toString().orEmpty()
-            } finally {
-                windowRoot?.recycle()
-            }
-            if (packageName != selectedPackage && packageName != "com.global.ztmslg") {
-                return false
-            }
+            return matchingGameWindowFound
+        } finally {
+            visibleWindows.forEach { runCatching { it.recycle() } }
         }
-        return matchingGameWindowFound
     }
 
     private fun recognizeScreenshot(bitmap: Bitmap): JSONObject {
