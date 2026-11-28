@@ -26,6 +26,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 class WorkerAccessibilityService : AccessibilityService() {
+    private data class ScreenshotFrame(
+        val bitmap: Bitmap,
+        val displayWidth: Int,
+        val displayHeight: Int,
+        val cropLeft: Int,
+        val cropTop: Int
+    )
+
     private val executor = Executors.newScheduledThreadPool(2)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val textRecognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
@@ -297,11 +305,11 @@ class WorkerAccessibilityService : AccessibilityService() {
                 .put("reason", "screen_capture_requires_android_11_api_30")
         } else {
             runCatching {
-                val bitmap = captureGameScreenshot(gameWindowBounds, gameWindowId, selectedPackage)
+                val frame = captureGameScreenshot(gameWindowBounds, gameWindowId, selectedPackage)
                 try {
-                    recognizeScreenshot(bitmap)
+                    recognizeScreenshot(frame)
                 } finally {
-                    bitmap.recycle()
+                    frame.bitmap.recycle()
                 }
             }.getOrElse { error ->
                 JSONObject()
@@ -326,7 +334,7 @@ class WorkerAccessibilityService : AccessibilityService() {
         gameWindowBounds: Rect,
         gameWindowId: Int,
         selectedPackage: String
-    ): Bitmap {
+    ): ScreenshotFrame {
         if (!isUnobstructedGameWindow(gameWindowBounds, gameWindowId, selectedPackage)) {
             throw IllegalStateException("OCR заблокирован: игровое окно перекрыто или не подтверждено")
         }
@@ -381,9 +389,10 @@ class WorkerAccessibilityService : AccessibilityService() {
                 crop.right == fullDisplay.width && crop.bottom == fullDisplay.height) {
                 // Bitmap.createBitmap may return the source for a full-size crop; keep it alive.
                 returnedOriginal = true
-                return fullDisplay
+                return ScreenshotFrame(fullDisplay, fullDisplay.width, fullDisplay.height, crop.left, crop.top)
             }
-            return Bitmap.createBitmap(fullDisplay, crop.left, crop.top, crop.width, crop.height)
+            val cropped = Bitmap.createBitmap(fullDisplay, crop.left, crop.top, crop.width, crop.height)
+            return ScreenshotFrame(cropped, fullDisplay.width, fullDisplay.height, crop.left, crop.top)
         } catch (error: Throwable) {
             throw error
         } finally {
@@ -433,12 +442,15 @@ class WorkerAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun recognizeScreenshot(bitmap: Bitmap): JSONObject {
+    private fun recognizeScreenshot(frame: ScreenshotFrame): JSONObject {
+        val bitmap = frame.bitmap
         val inputImage = InputImage.fromBitmap(bitmap, 0)
         val visionText = Tasks.await(textRecognizer.process(inputImage), 15, TimeUnit.SECONDS)
         val lines = JSONArray()
         val width = bitmap.width.coerceAtLeast(1)
         val height = bitmap.height.coerceAtLeast(1)
+        val displayWidth = frame.displayWidth.coerceAtLeast(1)
+        val displayHeight = frame.displayHeight.coerceAtLeast(1)
 
         for (block in visionText.textBlocks) {
             for (line in block.lines) {
@@ -446,10 +458,10 @@ class WorkerAccessibilityService : AccessibilityService() {
                 val item = JSONObject()
                     .put("text", line.text.take(160))
                     .put("bounds", JSONObject()
-                        .put("left", (bounds.left * 10000 / width).coerceIn(0, 10000))
-                        .put("top", (bounds.top * 10000 / height).coerceIn(0, 10000))
-                        .put("right", (bounds.right * 10000 / width).coerceIn(0, 10000))
-                        .put("bottom", (bounds.bottom * 10000 / height).coerceIn(0, 10000)))
+                        .put("left", ((bounds.left + frame.cropLeft) * 10000 / displayWidth).coerceIn(0, 10000))
+                        .put("top", ((bounds.top + frame.cropTop) * 10000 / displayHeight).coerceIn(0, 10000))
+                        .put("right", ((bounds.right + frame.cropLeft) * 10000 / displayWidth).coerceIn(0, 10000))
+                        .put("bottom", ((bounds.bottom + frame.cropTop) * 10000 / displayHeight).coerceIn(0, 10000)))
                 if (line.confidence >= 0f) item.put("confidence", line.confidence.toDouble())
                 lines.put(item)
                 if (lines.length() >= 250) break
@@ -461,8 +473,11 @@ class WorkerAccessibilityService : AccessibilityService() {
             .put("status", "ok")
             .put("engine", "google_ml_kit_text_recognition_v2")
             .put("processed_on_device", true)
-            .put("image_width", width)
-            .put("image_height", height)
+            .put("image_width", displayWidth)
+            .put("image_height", displayHeight)
+            .put("ocr_crop_width", width)
+            .put("ocr_crop_height", height)
+            .put("coordinate_space", "display_normalized_0_10000")
             .put("text", visionText.text.take(12000))
             .put("lines", lines)
     }
