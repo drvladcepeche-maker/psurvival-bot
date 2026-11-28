@@ -47,7 +47,7 @@ class GameScreenClassifierTest {
         val autoPass = "= 743к 41.90м 5 700к 4э1к пери 17 начал(а) " +
             "групповую атаку на Логой Почта НОВ Е Ещё"
 
-        val result = GameScreenClassifier.classify("$sparsePass\\n$autoPass")
+        val result = GameScreenClassifier.classify("$sparsePass\n$autoPass")
 
         assertEquals("city", result.getString("category"))
         assertFalse(result.getBoolean("actionable"))
