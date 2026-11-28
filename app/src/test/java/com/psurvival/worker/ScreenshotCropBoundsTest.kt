@@ -14,6 +14,13 @@ class ScreenshotCropBoundsTest {
         assertEquals(1780, result.height)
     }
 
+    @Test fun acceptsExactFullDisplayBoundsForImmersiveGameWindows() {
+        val result = ScreenshotCropBounds.calculate(0, 0, 1080, 2400, 1080, 2400)
+        requireNotNull(result)
+        assertEquals(1080, result.width)
+        assertEquals(2400, result.height)
+    }
+
     @Test fun rejectsBoundsOutsideDisplayInsteadOfClamping() {
         assertNull(ScreenshotCropBounds.calculate(-1, 0, 900, 1800, 1080, 2400))
         assertNull(ScreenshotCropBounds.calculate(0, 0, 1081, 1800, 1080, 2400))
