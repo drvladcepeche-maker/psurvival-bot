@@ -72,7 +72,7 @@ GitHub Actions type-checks both Edge Functions, runs unit tests for webhook-secr
 - Telegram user profiles are persisted in `psurvival_bot_profiles`; settings storage is ready for additional user-configurable fields.
 - `/daily` enqueues a durable `daily_routine` job with an idempotency key, so Telegram retries do not create duplicate tasks. Configure `daily_steps` first; otherwise the executor marks the job as unconfigured rather than pretending it ran.
 - `/tasks` reads the most recent tasks from Supabase.
-- `/register_worker` issues a private-chat worker token; `/rotate_worker` invalidates the previous token by replacing its hash.
+- `/register_worker` issues a private-chat worker token; `/rotate_worker` invalidates the previous token by replacing its hash. This `psw_...` worker token is separate from `TELEGRAM_BOT_TOKEN` (the BotFather token); never paste the BotFather token into the Android Worker app.
 - Queue schema: `psurvival_bot_jobs`; executor registry: `psurvival_bot_devices`; event log: `psurvival_bot_job_events`.
 - The worker API supports authenticated `claim`, `heartbeat`, `complete`, and `fail` operations with leases and retry scheduling.
 - Each Termux bridge claim includes a fresh UUID `claim_token`; the database uses it to make claim retries idempotent. The Python and Node clients must send this field to match the deployed `termux-bridge` function.
